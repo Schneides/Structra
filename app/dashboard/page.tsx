@@ -20,6 +20,24 @@ type Season = {
   suggested_player_fee: number | null;
 };
 
+function FinanceBadge({ fee }: { fee: number | null }) {
+  const done = Number(fee ?? 0) > 0;
+  if (done) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-green-100 px-2.5 py-1 text-xs font-semibold text-green-700">
+        <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
+        Finance set
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-gray-100 px-2.5 py-1 text-xs font-semibold text-gray-500">
+      <span className="h-1.5 w-1.5 rounded-full bg-gray-400" />
+      Finance needed
+    </span>
+  );
+}
+
 export default async function DashboardPage() {
   const { data: leagues, error } = await supabase
     .from("leagues")
@@ -27,7 +45,7 @@ export default async function DashboardPage() {
     .order("id", { ascending: false });
 
   const leagueList = (leagues ?? []) as League[];
-  const leagueIds = leagueList.map((league) => league.id);
+  const leagueIds = leagueList.map((l) => l.id);
 
   const { data: seasonsData } =
     leagueIds.length > 0
@@ -41,7 +59,6 @@ export default async function DashboardPage() {
   const seasons = (seasonsData ?? []) as Season[];
 
   const seasonsByLeague = new Map<number, Season[]>();
-
   for (const season of seasons) {
     const current = seasonsByLeague.get(season.league_id) ?? [];
     current.push(season);
@@ -49,124 +66,170 @@ export default async function DashboardPage() {
   }
 
   return (
-    <main className="mx-auto max-w-5xl px-6 py-10">
-      <div className="mb-8 flex items-center justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold">Dashboard</h1>
-          <p className="mt-2 text-gray-600">
-            Manage your leagues, seasons, drafts, payments, schedules, and stats.
-          </p>
+    <div className="min-h-screen bg-gray-50">
+      <main className="mx-auto max-w-6xl px-6 py-8">
+
+        {/* Header */}
+        <div className="mb-8 flex items-start justify-between gap-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">
+              Structra
+            </p>
+            <h1 className="mt-1 text-3xl font-bold tracking-tight text-gray-900">
+              Dashboard
+            </h1>
+            <p className="mt-1.5 text-sm text-gray-500">
+              Your leagues, seasons, and current setup status at a glance.
+            </p>
+          </div>
+          <Link
+            href="/leagues/new"
+            className="shrink-0 rounded-lg bg-black px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-gray-800"
+          >
+            New League
+          </Link>
         </div>
 
-        <Link
-          href="/leagues/new"
-          className="rounded-lg bg-black px-5 py-3 text-white hover:bg-gray-800"
-        >
-          Create League
-        </Link>
-      </div>
+        {/* Error */}
+        {error && (
+          <div className="mb-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+            There was a problem loading your leagues. Please refresh the page.
+          </div>
+        )}
 
-      {error && (
-        <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-red-700">
-          There was a problem loading leagues.
-        </div>
-      )}
+        {/* Empty state */}
+        {!error && leagueList.length === 0 && (
+          <div className="rounded-2xl border border-dashed border-gray-300 bg-white p-12 text-center shadow-sm">
+            <p className="text-lg font-semibold text-gray-900">No leagues yet</p>
+            <p className="mt-2 text-sm text-gray-500">
+              Create your first league to start building seasons, drafts, and schedules.
+            </p>
+            <Link
+              href="/leagues/new"
+              className="mt-6 inline-block rounded-lg bg-black px-6 py-2.5 text-sm font-semibold text-white hover:bg-gray-800"
+            >
+              Create League
+            </Link>
+          </div>
+        )}
 
-      {!error && leagueList.length === 0 && (
-        <div className="rounded-xl border bg-white p-6 shadow-sm">
-          <h2 className="text-xl font-semibold">No leagues yet</h2>
-          <p className="mt-2 text-gray-600">
-            Create your first league to start building seasons.
-          </p>
-        </div>
-      )}
+        {/* League cards */}
+        {!error && leagueList.length > 0 && (
+          <div className="grid gap-4">
+            {leagueList.map((league) => {
+              const leagueSeasons = seasonsByLeague.get(league.id) ?? [];
+              const latestSeason = leagueSeasons[0];
 
-      {!error && leagueList.length > 0 && (
-        <div className="grid gap-5">
-          {leagueList.map((league) => {
-            const leagueSeasons = seasonsByLeague.get(league.id) ?? [];
-            const latestSeason = leagueSeasons[0];
+              const setupLabel =
+                latestSeason?.roster_setup_type === "draft"
+                  ? "Draft"
+                  : latestSeason?.roster_setup_type === "manual"
+                  ? "Manual"
+                  : null;
 
-            const setupType =
-              latestSeason?.roster_setup_type === "draft"
-                ? "Draft"
-                : latestSeason?.roster_setup_type === "manual"
-                ? "Manual Rosters"
-                : "Not Set";
-
-            const financeStatus =
-              latestSeason && Number(latestSeason.suggested_player_fee ?? 0) > 0
-                ? "Finance Started"
-                : "Finance Not Started";
-
-            return (
-              <div
-                key={league.id}
-                className="rounded-xl border bg-white p-6 shadow-sm"
-              >
-                <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
-                  <div>
-                    <h2 className="text-xl font-semibold">
+              return (
+                <div
+                  key={league.id}
+                  className="rounded-2xl border bg-white shadow-sm"
+                >
+                  {/* League header */}
+                  <div className="flex items-start justify-between gap-4 px-6 pb-4 pt-6">
+                    <div>
                       <Link
                         href={`/leagues/${league.id}`}
-                        className="hover:underline"
+                        className="text-xl font-bold text-gray-900 hover:underline"
                       >
                         {league.league_name}
                       </Link>
-                    </h2>
+                      <p className="mt-0.5 text-sm text-gray-500">
+                        {league.sport ?? "Sport not set"}
+                        {setupLabel && (
+                          <span className="ml-2 rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs font-medium text-gray-500">
+                            {setupLabel}
+                          </span>
+                        )}
+                      </p>
+                    </div>
 
-                    <p className="mt-1 text-gray-600">
-                      {league.sport || "Sport not set"}
-                    </p>
+                    <div className="flex shrink-0 gap-2">
+                      <Link
+                        href={`/leagues/${league.id}`}
+                        className="rounded-lg border bg-white px-3 py-1.5 text-xs font-medium shadow-sm hover:bg-gray-50"
+                      >
+                        View
+                      </Link>
+                      <Link
+                        href={`/leagues/${league.id}/seasons/new`}
+                        className="rounded-lg bg-black px-3 py-1.5 text-xs font-semibold text-white hover:bg-gray-800"
+                      >
+                        Add Season
+                      </Link>
+                    </div>
                   </div>
 
-                  <div className="flex flex-wrap gap-3">
-                    <Link
-                      href={`/leagues/${league.id}`}
-                      className="rounded-lg border px-4 py-2 text-sm font-medium hover:bg-gray-50"
-                    >
-                      View League
-                    </Link>
-
-                    <Link
-                      href={`/leagues/${league.id}/seasons/new`}
-                      className="rounded-lg bg-black px-4 py-2 text-sm font-medium text-white hover:bg-gray-800"
-                    >
-                      Add Season
-                    </Link>
+                  {/* Stat strip */}
+                  <div className="grid grid-cols-2 gap-px border-t bg-gray-100 sm:grid-cols-3">
+                    <div className="bg-white px-6 py-3">
+                      <p className="text-xs font-medium uppercase tracking-wide text-gray-400">
+                        Seasons
+                      </p>
+                      <p className="mt-0.5 text-xl font-bold text-gray-900">
+                        {leagueSeasons.length}
+                      </p>
+                    </div>
+                    <div className="bg-white px-6 py-3">
+                      <p className="text-xs font-medium uppercase tracking-wide text-gray-400">
+                        Active Season
+                      </p>
+                      <p className="mt-0.5 truncate text-sm font-semibold text-gray-900">
+                        {latestSeason?.season_name ?? "—"}
+                      </p>
+                    </div>
+                    <div className="col-span-2 bg-white px-6 py-3 sm:col-span-1">
+                      <p className="text-xs font-medium uppercase tracking-wide text-gray-400">
+                        Finance Status
+                      </p>
+                      <div className="mt-1">
+                        {latestSeason ? (
+                          <FinanceBadge fee={latestSeason.suggested_player_fee} />
+                        ) : (
+                          <span className="text-sm text-gray-400">No seasons</span>
+                        )}
+                      </div>
+                    </div>
                   </div>
+
+                  {/* Season rows */}
+                  {leagueSeasons.length > 0 && (
+                    <div className="divide-y border-t">
+                      {leagueSeasons.map((season) => (
+                        <Link
+                          key={season.id}
+                          href={`/leagues/${league.id}/seasons/${season.id}`}
+                          className="flex items-center justify-between gap-4 px-6 py-3.5 hover:bg-gray-50"
+                        >
+                          <div className="flex items-center gap-3">
+                            <span className="text-sm font-medium text-gray-900">
+                              {season.season_name}
+                            </span>
+                            {season.roster_setup_type && (
+                              <span className="hidden rounded-full border border-gray-200 px-2 py-0.5 text-xs text-gray-400 sm:inline">
+                                {season.roster_setup_type === "draft" ? "Draft" : "Manual"}
+                              </span>
+                            )}
+                          </div>
+                          <FinanceBadge fee={season.suggested_player_fee} />
+                        </Link>
+                      ))}
+                    </div>
+                  )}
                 </div>
+              );
+            })}
+          </div>
+        )}
 
-                <div className="mt-5 grid grid-cols-2 gap-4 md:grid-cols-4">
-                  <div className="rounded-lg bg-gray-50 p-4">
-                    <p className="text-sm text-gray-500">Seasons</p>
-                    <p className="mt-1 text-2xl font-bold">
-                      {leagueSeasons.length}
-                    </p>
-                  </div>
-
-                  <div className="rounded-lg bg-gray-50 p-4">
-                    <p className="text-sm text-gray-500">Latest Season</p>
-                    <p className="mt-1 text-lg font-bold">
-                      {latestSeason?.season_name || "None Yet"}
-                    </p>
-                  </div>
-
-                  <div className="rounded-lg bg-gray-50 p-4">
-                    <p className="text-sm text-gray-500">Setup Type</p>
-                    <p className="mt-1 text-lg font-bold">{setupType}</p>
-                  </div>
-
-                  <div className="rounded-lg bg-gray-50 p-4">
-                    <p className="text-sm text-gray-500">Finance</p>
-                    <p className="mt-1 text-lg font-bold">{financeStatus}</p>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </main>
+      </main>
+    </div>
   );
 }

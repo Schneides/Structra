@@ -6,21 +6,97 @@ const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!
 );
 
-function getStatusBadge(status: "In Progress" | "Completed") {
-    if (status === "Completed") {
+// ── Status system ─────────────────────────────────────────────────────────────
+
+type StepStatus = "completed" | "in_progress" | "not_started";
+
+function StatusBadge({ status }: { status: StepStatus }) {
+    if (status === "completed") {
         return (
-            <span className="rounded-full bg-green-100 px-3 py-1 text-xs font-medium text-green-700">
-                Completed
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-green-100 px-2.5 py-1 text-xs font-semibold text-green-700">
+                <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
+                Complete
             </span>
         );
     }
-
+    if (status === "in_progress") {
+        return (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-700">
+                <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                In Progress
+            </span>
+        );
+    }
     return (
-        <span className="rounded-full bg-yellow-100 px-3 py-1 text-xs font-medium text-yellow-700">
-            In Progress
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-gray-100 px-2.5 py-1 text-xs font-semibold text-gray-500">
+            <span className="h-1.5 w-1.5 rounded-full bg-gray-400" />
+            Not Started
         </span>
     );
 }
+
+function StatCard({
+    label,
+    value,
+    subtext,
+    accent = false,
+}: {
+    label: string;
+    value: string;
+    subtext?: string;
+    accent?: boolean;
+}) {
+    return (
+        <div className="rounded-xl border bg-white p-4 shadow-sm">
+            <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">{label}</p>
+            <p className={`mt-1.5 text-2xl font-bold tabular-nums ${accent ? "text-red-600" : "text-gray-900"}`}>
+                {value}
+            </p>
+            {subtext && <p className="mt-0.5 text-xs text-gray-400">{subtext}</p>}
+        </div>
+    );
+}
+
+function WorkflowCard({
+    step,
+    title,
+    href,
+    status,
+    description,
+    detail,
+}: {
+    step: number;
+    title: string;
+    href: string;
+    status: StepStatus;
+    description: string;
+    detail?: string;
+}) {
+    return (
+        <Link
+            href={href}
+            className="group flex flex-col rounded-xl border bg-white p-5 shadow-sm transition-shadow hover:shadow-md"
+        >
+            <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gray-100 text-xs font-bold text-gray-500">
+                        {step}
+                    </span>
+                    <h2 className="text-base font-semibold text-gray-900 group-hover:underline">
+                        {title}
+                    </h2>
+                </div>
+                <StatusBadge status={status} />
+            </div>
+            <p className="mt-3 text-sm leading-relaxed text-gray-500">{description}</p>
+            {detail && (
+                <p className="mt-3 border-t pt-3 text-xs font-medium text-gray-400">{detail}</p>
+            )}
+        </Link>
+    );
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function formatCurrency(value: number) {
     return value.toLocaleString(undefined, {
@@ -32,6 +108,8 @@ function formatCurrency(value: number) {
 function roundMoney(value: number) {
     return Math.round((value + Number.EPSILON) * 100) / 100;
 }
+
+// ── Page ──────────────────────────────────────────────────────────────────────
 
 export default async function SeasonDetailPage({
     params,
@@ -83,12 +161,6 @@ export default async function SeasonDetailPage({
         .eq("league_id", Number(id))
         .eq("season_id", Number(seasonId));
 
-    const { data: draftPicks } = await supabase
-        .from("draft_picks")
-        .select("id")
-        .eq("league_id", Number(id))
-        .eq("season_id", Number(seasonId));
-
     const { data: draftOrder } = await supabase
         .from("draft_order")
         .select("id")
@@ -97,41 +169,39 @@ export default async function SeasonDetailPage({
 
     if (!league || !season) {
         return (
-            <main className="mx-auto max-w-6xl px-6 py-10">
-                <h1 className="text-3xl font-bold">Season not found</h1>
-                <p className="mt-2 text-gray-600">We could not load that season.</p>
-            </main>
+            <div className="min-h-screen bg-gray-50">
+                <main className="mx-auto max-w-6xl px-6 py-10">
+                    <h1 className="text-3xl font-bold">Season not found</h1>
+                    <p className="mt-2 text-gray-600">We could not load that season.</p>
+                    <Link href="/dashboard" className="mt-4 inline-block text-sm underline">
+                        Back to Dashboard
+                    </Link>
+                </main>
+            </div>
         );
     }
 
+    // ── Derived counts ────────────────────────────────────────────────────────
+
     const isDraftLeague = season.roster_setup_type === "draft";
-
-    const teamCount = teams?.length || 0;
-    const rosteredPlayers = players?.length || 0;
-    const poolPlayers = draftPlayers?.length || 0;
-    const draftedPlayers =
-        draftPlayers?.filter((p) => p.drafted_team_id !== null).length || 0;
-    const picksMade = draftPicks?.length || 0;
-    const draftOrderSet = (draftOrder?.length || 0) > 0;
-
-    const captainsAssignedCount =
-        teamLeaders?.filter((leader) => leader.role === "C").length || 0;
-
-    const captainsAssigned =
-        teamCount > 0 && captainsAssignedCount === teamCount;
-
+    const teamCount = teams?.length ?? 0;
+    const rosteredPlayers = players?.length ?? 0;
+    const poolPlayers = draftPlayers?.length ?? 0;
+    const draftedPlayers = draftPlayers?.filter((p) => p.drafted_team_id !== null).length ?? 0;
+    const draftOrderSet = (draftOrder?.length ?? 0) > 0;
+    const captainsAssignedCount = teamLeaders?.filter((l) => l.role === "C").length ?? 0;
+    const captainsAssigned = teamCount > 0 && captainsAssignedCount === teamCount;
     const totalPlayers = isDraftLeague ? draftedPlayers : rosteredPlayers;
 
     const suggestedPlayerFee = Number(season.suggested_player_fee ?? 0);
-    const playerCount = players?.length || 0;
-
+    const playerCount = players?.length ?? 0;
     const totalLeagueCost = roundMoney(suggestedPlayerFee * playerCount);
 
     const weightedPlayerCount =
-        players?.reduce((sum, player) => {
-            const exemptionPercent = Number(player.payment_exemption_percent ?? 0);
-            return sum + (1 - exemptionPercent / 100);
-        }, 0) || 0;
+        players?.reduce((sum, p) => {
+            const ex = Number(p.payment_exemption_percent ?? 0);
+            return sum + (1 - ex / 100);
+        }, 0) ?? 0;
 
     const redistributedBaseFee =
         suggestedPlayerFee > 0 && weightedPlayerCount > 0
@@ -139,74 +209,79 @@ export default async function SeasonDetailPage({
             : suggestedPlayerFee;
 
     const calculatedTotalDue =
-        players?.reduce((sum, player) => {
-            const exemptionPercent = Number(player.payment_exemption_percent ?? 0);
-            const playerDue = roundMoney(
-                redistributedBaseFee * (1 - exemptionPercent / 100)
-            );
-
-            return sum + playerDue;
-        }, 0) || 0;
+        players?.reduce((sum, p) => {
+            const ex = Number(p.payment_exemption_percent ?? 0);
+            return sum + roundMoney(redistributedBaseFee * (1 - ex / 100));
+        }, 0) ?? 0;
 
     const fallbackTotalDue =
-        players?.reduce((sum, p) => sum + Number(p.amount_due ?? 0), 0) || 0;
+        players?.reduce((sum, p) => sum + Number(p.amount_due ?? 0), 0) ?? 0;
 
-    const totalDue = roundMoney(
-        suggestedPlayerFee > 0 ? calculatedTotalDue : fallbackTotalDue
-    );
-
+    const totalDue = roundMoney(suggestedPlayerFee > 0 ? calculatedTotalDue : fallbackTotalDue);
     const totalPaid = roundMoney(
-        players?.reduce((sum, p) => sum + Number(p.amount_paid ?? 0), 0) || 0
+        players?.reduce((sum, p) => sum + Number(p.amount_paid ?? 0), 0) ?? 0
     );
-
     const outstanding = roundMoney(totalDue - totalPaid);
-
-    const completedGames =
-        games?.filter((g) => g.status === "completed").length || 0;
-    const gameCount = games?.length || 0;
+    const completedGames = games?.filter((g) => g.status === "completed").length ?? 0;
+    const gameCount = games?.length ?? 0;
 
     const financeSaved = suggestedPlayerFee > 0;
     const exemptionsSet = Boolean(season.exemptions_completed_at);
-    const anyPaymentsEntered =
-        players?.some((p) => Number(p.amount_paid ?? 0) > 0) || false;
+    const anyPaymentsEntered = players?.some((p) => Number(p.amount_paid ?? 0) > 0) ?? false;
+    const allPlayersPaid = totalPlayers > 0 && outstanding <= 0 && totalDue > 0;
 
-    const allPlayersPaid =
-        totalPlayers > 0 && outstanding <= 0 && totalDue > 0;
+    // ── Status (3 states) ─────────────────────────────────────────────────────
 
-    const financeStatus = financeSaved ? "Completed" : "In Progress";
-    const exemptionsStatus = exemptionsSet ? "Completed" : "In Progress";
-    const paymentsStatus = allPlayersPaid
-        ? "Completed"
+    const financeStatus: StepStatus = financeSaved ? "completed" : "not_started";
+
+    const draftStatus: StepStatus =
+        teamCount > 0 && poolPlayers > 0 && captainsAssigned && draftOrderSet
+            ? "completed"
+            : teamCount > 0 || poolPlayers > 0
+              ? "in_progress"
+              : "not_started";
+
+    const teamsStatus: StepStatus =
+        teamCount > 0 && rosteredPlayers > 0
+            ? "completed"
+            : teamCount > 0
+              ? "in_progress"
+              : "not_started";
+
+    const exemptionsStatus: StepStatus = exemptionsSet
+        ? "completed"
+        : financeSaved
+          ? "in_progress"
+          : "not_started";
+
+    const scheduleStatus: StepStatus =
+        completedGames > 0 && completedGames === gameCount
+            ? "completed"
+            : gameCount > 0
+              ? "in_progress"
+              : "not_started";
+
+    const paymentsStatus: StepStatus = allPlayersPaid
+        ? "completed"
         : anyPaymentsEntered
-          ? "In Progress"
-          : "In Progress";
-    const scheduleStatus = gameCount > 0 ? "Completed" : "In Progress";
+          ? "in_progress"
+          : "not_started";
 
-    const draftStatus =
-        isDraftLeague &&
-        teamCount > 0 &&
-        poolPlayers > 0 &&
-        captainsAssigned &&
-        draftOrderSet
-            ? "Completed"
-            : "In Progress";
+    const standingsStatus: StepStatus = completedGames > 0 ? "in_progress" : "not_started";
 
-    const teamsStatus =
-        !isDraftLeague && teamCount > 0 && rosteredPlayers > 0
-            ? "Completed"
-            : "In Progress";
+    // ── Next step ─────────────────────────────────────────────────────────────
 
-    let nextStepTitle = "Complete finance setup";
+    let nextStepTitle = "Set up season finance";
     let nextStepDescription =
         "Estimate league pricing and projected player fees before building the season.";
     let nextStepHref = `/leagues/${id}/seasons/${seasonId}/finance`;
 
-    if (financeSaved && isDraftLeague && draftStatus !== "Completed") {
-        nextStepTitle = "Complete the draft";
+    if (financeSaved && isDraftLeague && draftStatus !== "completed") {
+        nextStepTitle = "Complete the draft setup";
         nextStepDescription =
             "Finish player pool, teams, captains, draft order, and draft board.";
         nextStepHref = `/leagues/${id}/seasons/${seasonId}/draft`;
-    } else if (financeSaved && !isDraftLeague && teamsStatus !== "Completed") {
+    } else if (financeSaved && !isDraftLeague && teamsStatus !== "completed") {
         nextStepTitle = "Build teams and rosters";
         nextStepDescription =
             "Add players to teams before applying exemptions and generating the schedule.";
@@ -216,7 +291,7 @@ export default async function SeasonDetailPage({
         nextStepDescription =
             "Apply captain, alternate, goalie, or commissioner exemptions before confirming player balances.";
         nextStepHref = `/leagues/${id}/seasons/${seasonId}/payments/exemptions`;
-    } else if (financeSaved && exemptionsSet && scheduleStatus !== "Completed") {
+    } else if (financeSaved && exemptionsSet && scheduleStatus === "not_started") {
         nextStepTitle = "Generate the schedule";
         nextStepDescription =
             "Create games and begin setting matchups, dates, times, and locations.";
@@ -226,191 +301,204 @@ export default async function SeasonDetailPage({
         nextStepDescription =
             "Track player payments, balances, and collection notes as money comes in.";
         nextStepHref = `/leagues/${id}/seasons/${seasonId}/payments`;
+    } else if (allPlayersPaid) {
+        nextStepTitle = "View season standings";
+        nextStepDescription =
+            "All payments collected. Review the current standings and final stats.";
+        nextStepHref = `/leagues/${id}/seasons/${seasonId}/standings`;
     }
 
+    // ── Render ────────────────────────────────────────────────────────────────
+
     return (
-        <main className="mx-auto max-w-6xl px-6 py-10">
-            <div className="mb-8 flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
+        <div className="min-h-screen bg-gray-50">
+            <main className="mx-auto max-w-6xl px-6 py-8">
+
+                {/* Breadcrumb */}
+                <nav aria-label="breadcrumb" className="mb-6 flex items-center gap-2 text-sm text-gray-400">
+                    <Link href="/dashboard" className="transition-colors hover:text-gray-700">
+                        Dashboard
+                    </Link>
+                    <span>/</span>
+                    <Link href={`/leagues/${id}`} className="transition-colors hover:text-gray-700">
+                        {league.league_name}
+                    </Link>
+                    <span>/</span>
+                    <span className="font-medium text-gray-700">{season.season_name}</span>
+                </nav>
+
+                {/* Header */}
+                <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                        <div className="flex flex-wrap items-center gap-3">
+                            <h1 className="text-3xl font-bold tracking-tight text-gray-900">
+                                {season.season_name}
+                            </h1>
+                            <span className="rounded-full border border-gray-200 bg-white px-3 py-0.5 text-xs font-medium text-gray-500 shadow-sm">
+                                {isDraftLeague ? "Draft League" : "Manual Rosters"}
+                            </span>
+                        </div>
+                        <p className="mt-2 text-sm text-gray-500">
+                            {league.league_name} · {league.sport}
+                        </p>
+                    </div>
+
+                    <div className="flex shrink-0 gap-2">
+                        <Link
+                            href={`/leagues/${id}/seasons/${seasonId}/edit`}
+                            className="rounded-lg border bg-white px-4 py-2 text-sm font-medium shadow-sm hover:bg-gray-50"
+                        >
+                            Edit
+                        </Link>
+                        <Link
+                            href={`/leagues/${id}/seasons`}
+                            className="rounded-lg border bg-white px-4 py-2 text-sm font-medium shadow-sm hover:bg-gray-50"
+                        >
+                            All Seasons
+                        </Link>
+                    </div>
+                </div>
+
+                {/* Next Step Banner */}
+                <Link
+                    href={nextStepHref}
+                    className="mb-8 flex items-center justify-between gap-6 rounded-2xl bg-black px-6 py-5 shadow-md transition-colors hover:bg-gray-900"
+                >
+                    <div>
+                        <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">
+                            Recommended Next Step
+                        </p>
+                        <h2 className="mt-1 text-lg font-bold text-white">{nextStepTitle}</h2>
+                        <p className="mt-1 text-sm text-gray-400">{nextStepDescription}</p>
+                    </div>
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-white/20 text-lg text-white/60">
+                        →
+                    </div>
+                </Link>
+
+                {/* Stats row */}
+                <div className="mb-8 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                    <StatCard
+                        label={isDraftLeague ? "Drafted Players" : "Rostered Players"}
+                        value={String(totalPlayers)}
+                    />
+                    <StatCard
+                        label="Collected"
+                        value={`$${formatCurrency(totalPaid)}`}
+                    />
+                    <StatCard
+                        label="Outstanding"
+                        value={`$${formatCurrency(outstanding)}`}
+                        accent={outstanding > 0.01}
+                    />
+                    <StatCard
+                        label="Games Done"
+                        value={String(completedGames)}
+                        subtext={gameCount > 0 ? `of ${gameCount} total` : "none scheduled yet"}
+                    />
+                </div>
+
+                {/* Workflow grid */}
                 <div>
-                    <h1 className="text-3xl font-bold">{season.season_name}</h1>
-                    <p className="mt-2 text-gray-600">
-                        {league.league_name} • {league.sport}
+                    <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-gray-400">
+                        Season Workflow
                     </p>
-                    <p className="mt-3 text-sm text-gray-500">
-                        Recommended workflow:{" "}
-                        {isDraftLeague
-                            ? "Finance → Draft Setup → Exemptions → Schedule → Payments → Stats → Standings"
-                            : "Finance → Teams → Exemptions → Schedule → Payments → Stats → Standings"}
-                    </p>
-                </div>
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                        <WorkflowCard
+                            step={1}
+                            title="Finance"
+                            href={`/leagues/${id}/seasons/${seasonId}/finance`}
+                            status={financeStatus}
+                            description="Configure league costs and projected player fees."
+                            detail={financeSaved ? `$${formatCurrency(suggestedPlayerFee)} / player` : undefined}
+                        />
 
-                <div className="flex gap-3">
-                    <Link
-                        href={`/leagues/${id}/seasons/${seasonId}/edit`}
-                        className="flex min-h-[48px] items-center justify-center rounded-lg border px-5 py-3 text-center hover:bg-gray-50"
-                    >
-                        Edit Season
-                    </Link>
+                        {isDraftLeague ? (
+                            <WorkflowCard
+                                step={2}
+                                title="Draft"
+                                href={`/leagues/${id}/seasons/${seasonId}/draft`}
+                                status={draftStatus}
+                                description="Configure captains, draft order, player pool, and make picks."
+                                detail={
+                                    teamCount > 0
+                                        ? `${teamCount} teams · ${captainsAssignedCount}/${teamCount} captains · ${draftedPlayers} drafted`
+                                        : undefined
+                                }
+                            />
+                        ) : (
+                            <WorkflowCard
+                                step={2}
+                                title="Teams"
+                                href={`/leagues/${id}/seasons/${seasonId}/teams`}
+                                status={teamsStatus}
+                                description="Create teams and build full rosters."
+                                detail={
+                                    teamCount > 0
+                                        ? `${teamCount} teams · ${rosteredPlayers} players`
+                                        : undefined
+                                }
+                            />
+                        )}
 
-                    <Link
-                        href={`/leagues/${id}/seasons`}
-                        className="flex min-h-[48px] items-center justify-center rounded-lg border px-5 py-3 text-center hover:bg-gray-50"
-                    >
-                        Back to Seasons
-                    </Link>
-                </div>
-            </div>
+                        <WorkflowCard
+                            step={3}
+                            title="Exemptions"
+                            href={`/leagues/${id}/seasons/${seasonId}/payments/exemptions`}
+                            status={exemptionsStatus}
+                            description="Apply captain, goalie, and commissioner exemptions before confirming balances."
+                        />
 
-            <Link
-                href={nextStepHref}
-                className="mb-8 block rounded-xl border bg-black p-6 text-white shadow-sm hover:bg-gray-900"
-            >
-                <p className="text-sm font-medium text-gray-300">
-                    Next Recommended Step
-                </p>
-                <h2 className="mt-2 text-2xl font-semibold">{nextStepTitle}</h2>
-                <p className="mt-2 text-sm text-gray-300">{nextStepDescription}</p>
-            </Link>
+                        <WorkflowCard
+                            step={4}
+                            title="Schedule"
+                            href={`/leagues/${id}/seasons/${seasonId}/schedule`}
+                            status={scheduleStatus}
+                            description="Generate games, manage attendance, lineups, and results."
+                            detail={
+                                gameCount > 0
+                                    ? `${completedGames} of ${gameCount} games complete`
+                                    : undefined
+                            }
+                        />
 
-            <div className="mb-8 grid grid-cols-2 gap-4 md:grid-cols-4">
-                <div className="rounded-xl border bg-white p-6 shadow-sm">
-                    <p className="text-sm text-gray-500">
-                        {isDraftLeague ? "Drafted Players" : "Rostered Players"}
-                    </p>
-                    <p className="mt-2 text-3xl font-bold">{totalPlayers}</p>
-                </div>
+                        <WorkflowCard
+                            step={5}
+                            title="Payments"
+                            href={`/leagues/${id}/seasons/${seasonId}/payments`}
+                            status={paymentsStatus}
+                            description="Track balances, collected payments, and payment notes."
+                            detail={
+                                totalDue > 0
+                                    ? `$${formatCurrency(totalPaid)} of $${formatCurrency(totalDue)} collected`
+                                    : undefined
+                            }
+                        />
 
-                <div className="rounded-xl border bg-white p-6 shadow-sm">
-                    <p className="text-sm text-gray-500">Collected</p>
-                    <p className="mt-2 text-3xl font-bold">
-                        ${formatCurrency(totalPaid)}
-                    </p>
-                </div>
+                        <WorkflowCard
+                            step={6}
+                            title="Stats"
+                            href={`/leagues/${id}/seasons/${seasonId}/stats`}
+                            status={completedGames > 0 ? "in_progress" : "not_started"}
+                            description="View player leaders and season performance data."
+                        />
 
-                <div className="rounded-xl border bg-white p-6 shadow-sm">
-                    <p className="text-sm text-gray-500">Outstanding</p>
-                    <p className="mt-2 text-3xl font-bold">
-                        ${formatCurrency(outstanding)}
-                    </p>
-                </div>
-
-                <div className="rounded-xl border bg-white p-6 shadow-sm">
-                    <p className="text-sm text-gray-500">Games Completed</p>
-                    <p className="mt-2 text-3xl font-bold">{completedGames}</p>
-                </div>
-            </div>
-
-            <div className="grid gap-4 md:grid-cols-3">
-                <Link
-                    href={`/leagues/${id}/seasons/${seasonId}/finance`}
-                    className="block rounded-xl border bg-white p-6 shadow-sm hover:bg-gray-50"
-                >
-                    <div className="flex items-start justify-between gap-3">
-                        <h2 className="text-xl font-semibold">Finance</h2>
-                        {getStatusBadge(financeStatus)}
+                        <WorkflowCard
+                            step={7}
+                            title="Standings"
+                            href={`/leagues/${id}/seasons/${seasonId}/standings`}
+                            status={standingsStatus}
+                            description="Track records, goals, points, and team rankings."
+                            detail={
+                                completedGames > 0
+                                    ? `Based on ${completedGames} completed game${completedGames !== 1 ? "s" : ""}`
+                                    : undefined
+                            }
+                        />
                     </div>
-                    <p className="mt-2 text-sm text-gray-600">
-                        Configure league costs and projected player fees.
-                    </p>
-                </Link>
+                </div>
 
-                {isDraftLeague ? (
-                    <Link
-                        href={`/leagues/${id}/seasons/${seasonId}/draft`}
-                        className="block rounded-xl border bg-white p-6 shadow-sm hover:bg-gray-50"
-                    >
-                        <div className="flex items-start justify-between gap-3">
-                            <h2 className="text-xl font-semibold">Draft</h2>
-                            {getStatusBadge(draftStatus)}
-                        </div>
-
-                        <p className="mt-2 text-sm text-gray-600">
-                            Configure captains, draft order, player pool, and selections.
-                        </p>
-
-                        <div className="mt-4 grid grid-cols-2 gap-2 text-sm text-gray-600">
-                            <p>Teams: {teamCount}</p>
-                            <p>Pool: {poolPlayers}</p>
-                            <p>Captains: {captainsAssignedCount} / {teamCount}</p>
-                            <p>Order: {draftOrderSet ? "Set" : "Needed"}</p>
-                            <p>Picks: {picksMade}</p>
-                            <p>Drafted: {draftedPlayers}</p>
-                        </div>
-                    </Link>
-                ) : (
-                    <Link
-                        href={`/leagues/${id}/seasons/${seasonId}/teams`}
-                        className="block rounded-xl border bg-white p-6 shadow-sm hover:bg-gray-50"
-                    >
-                        <div className="flex items-start justify-between gap-3">
-                            <h2 className="text-xl font-semibold">Teams</h2>
-                            {getStatusBadge(teamsStatus)}
-                        </div>
-                        <p className="mt-2 text-sm text-gray-600">
-                            Create teams and build full rosters.
-                        </p>
-                    </Link>
-                )}
-
-                <Link
-                    href={`/leagues/${id}/seasons/${seasonId}/payments/exemptions`}
-                    className="block rounded-xl border bg-white p-6 shadow-sm hover:bg-gray-50"
-                >
-                    <div className="flex items-start justify-between gap-3">
-                        <h2 className="text-xl font-semibold">Exemptions</h2>
-                        {getStatusBadge(exemptionsStatus)}
-                    </div>
-                    <p className="mt-2 text-sm text-gray-600">
-                        Apply player exemptions and rebalance final season fees.
-                    </p>
-                </Link>
-
-                <Link
-                    href={`/leagues/${id}/seasons/${seasonId}/schedule`}
-                    className="block rounded-xl border bg-white p-6 shadow-sm hover:bg-gray-50"
-                >
-                    <div className="flex items-start justify-between gap-3">
-                        <h2 className="text-xl font-semibold">Schedule</h2>
-                        {getStatusBadge(scheduleStatus)}
-                    </div>
-                    <p className="mt-2 text-sm text-gray-600">
-                        Generate games, attendance, lineups, and results.
-                    </p>
-                </Link>
-
-                <Link
-                    href={`/leagues/${id}/seasons/${seasonId}/payments`}
-                    className="block rounded-xl border bg-white p-6 shadow-sm hover:bg-gray-50"
-                >
-                    <div className="flex items-start justify-between gap-3">
-                        <h2 className="text-xl font-semibold">Payments</h2>
-                        {getStatusBadge(paymentsStatus)}
-                    </div>
-                    <p className="mt-2 text-sm text-gray-600">
-                        Track balances, collected payments, and payment notes.
-                    </p>
-                </Link>
-
-                <Link
-                    href={`/leagues/${id}/seasons/${seasonId}/stats`}
-                    className="block rounded-xl border bg-white p-6 shadow-sm hover:bg-gray-50"
-                >
-                    <h2 className="text-xl font-semibold">Stats</h2>
-                    <p className="mt-2 text-sm text-gray-600">
-                        View player leaders and season performance.
-                    </p>
-                </Link>
-
-                <Link
-                    href={`/leagues/${id}/seasons/${seasonId}/standings`}
-                    className="block rounded-xl border bg-white p-6 shadow-sm hover:bg-gray-50"
-                >
-                    <h2 className="text-xl font-semibold">Standings</h2>
-                    <p className="mt-2 text-sm text-gray-600">
-                        Track records, goals, points, and rankings.
-                    </p>
-                </Link>
-            </div>
-        </main>
+            </main>
+        </div>
     );
 }

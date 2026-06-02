@@ -45,6 +45,32 @@ type Team = {
   team_name: string;
 };
 
+function GameStatusBadge({ status }: { status: string | null }) {
+  const s = (status ?? "scheduled").toLowerCase();
+  if (s === "completed") {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-green-100 px-2.5 py-1 text-xs font-semibold text-green-700">
+        <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
+        Completed
+      </span>
+    );
+  }
+  if (s === "scheduled") {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-gray-100 px-2.5 py-1 text-xs font-semibold text-gray-500">
+        <span className="h-1.5 w-1.5 rounded-full bg-gray-400" />
+        Scheduled
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-700">
+      <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+      {status}
+    </span>
+  );
+}
+
 export default function SeasonSchedulePage({
   params,
 }: {
@@ -124,7 +150,6 @@ export default function SeasonSchedulePage({
 
   const formatDate = (dateString: string | null) => {
     if (!dateString) return "TBD";
-
     const date = new Date(`${dateString}T00:00:00`);
     return date.toLocaleDateString("en-US", {
       month: "2-digit",
@@ -135,15 +160,10 @@ export default function SeasonSchedulePage({
 
   const formatTime = (timeString: string | null) => {
     if (!timeString) return "TBD";
-
     const [hours, minutes] = timeString.split(":");
     const date = new Date();
     date.setHours(Number(hours), Number(minutes), 0, 0);
-
-    return date.toLocaleTimeString("en-US", {
-      hour: "numeric",
-      minute: "2-digit",
-    });
+    return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
   };
 
   const handleGenerateSchedule = async () => {
@@ -219,43 +239,42 @@ export default function SeasonSchedulePage({
     const homeTeam =
       game.home_team_id !== null
         ? teamNameById.get(game.home_team_id) || "Unknown Team"
-        : "Select Home Team";
+        : "Home TBD";
 
     const awayTeam =
       game.away_team_id !== null
         ? teamNameById.get(game.away_team_id) || "Unknown Team"
-        : "Select Away Team";
+        : "Away TBD";
+
+    const hasScore = game.home_score !== null || game.away_score !== null;
 
     return (
       <Link
         key={game.id}
         href={`/leagues/${id}/seasons/${seasonId}/schedule/${game.id}`}
-        className="block rounded-xl border bg-white p-6 shadow-sm hover:bg-gray-50"
+        className="group block rounded-xl border bg-white p-5 shadow-sm transition-shadow hover:shadow-md"
       >
         <div className="flex items-start justify-between gap-4">
           <div>
-            <p className="text-sm text-gray-500">
+            <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">
               Game {game.game_number ?? game.id}
             </p>
-            <p className="mt-1 text-lg font-semibold">
+            <p className="mt-1 text-base font-semibold text-gray-900 group-hover:underline">
               {homeTeam} vs {awayTeam}
             </p>
           </div>
-
-          <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-700">
-            {game.status || "scheduled"}
-          </span>
+          <GameStatusBadge status={game.status} />
         </div>
 
-        <div className="mt-4 space-y-1 text-gray-600">
-          <p>Date: {formatDate(game.game_date)}</p>
-          <p>Time: {formatTime(game.game_time)}</p>
-          <p>Location: {game.location || "TBD"}</p>
+        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-500">
+          <span>{formatDate(game.game_date)}</span>
+          <span>{formatTime(game.game_time)}</span>
+          <span>{game.location || "Location TBD"}</span>
         </div>
 
-        {(game.home_score !== null || game.away_score !== null) && (
-          <div className="mt-4 rounded-lg border bg-gray-50 p-3 text-sm">
-            Score: {game.home_score ?? 0} - {game.away_score ?? 0}
+        {hasScore && (
+          <div className="mt-3 inline-flex items-center gap-2 rounded-lg border bg-gray-50 px-3 py-1.5 text-sm font-semibold text-gray-900">
+            {game.home_score ?? 0} – {game.away_score ?? 0}
           </div>
         )}
       </Link>
@@ -264,115 +283,155 @@ export default function SeasonSchedulePage({
 
   if (loading) {
     return (
-      <main className="mx-auto max-w-5xl px-6 py-10">
-        <p>Loading schedule...</p>
-      </main>
+      <div className="min-h-screen bg-gray-50">
+        <main className="mx-auto max-w-6xl px-6 py-8">
+          <div className="mb-6 h-4 w-64 animate-pulse rounded bg-gray-200" />
+          <div className="mb-8 flex items-start justify-between">
+            <div className="h-9 w-48 animate-pulse rounded-lg bg-gray-200" />
+            <div className="h-9 w-32 animate-pulse rounded-lg bg-gray-200" />
+          </div>
+          <div className="grid gap-4">
+            {[1, 2, 3, 4].map((i) => (
+              <div key={i} className="h-24 animate-pulse rounded-xl bg-gray-200" />
+            ))}
+          </div>
+        </main>
+      </div>
     );
   }
 
   if (!league || !season) {
     return (
-      <main className="mx-auto max-w-5xl px-6 py-10">
-        <h1 className="text-3xl font-bold">Season not found</h1>
-        <p className="mt-2 text-gray-600">
-          We could not load that season schedule.
-        </p>
-      </main>
+      <div className="min-h-screen bg-gray-50">
+        <main className="mx-auto max-w-6xl px-6 py-10">
+          <h1 className="text-3xl font-bold">Season not found</h1>
+          <p className="mt-2 text-gray-500">We could not load that season schedule.</p>
+          <Link href="/dashboard" className="mt-4 inline-block text-sm underline">
+            Back to Dashboard
+          </Link>
+        </main>
+      </div>
     );
   }
 
   return (
-    <main className="mx-auto max-w-5xl px-6 py-10">
-      <div className="mb-8 flex items-start justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">Season Schedule</h1>
-          <p className="mt-2 text-gray-600">
-            {league.league_name} • {season.season_name}
-          </p>
-        </div>
+    <div className="min-h-screen bg-gray-50">
+      <main className="mx-auto max-w-6xl px-6 py-8">
 
-        <div className="flex gap-3">
-          {games.length > 0 && (
-            <Link
-              href={`/leagues/${id}/seasons/${seasonId}/schedule/new`}
-              className="rounded-lg bg-black px-5 py-3 text-white"
-            >
-              Add Game
-            </Link>
-          )}
-
-          <Link
-            href={`/leagues/${id}/seasons/${seasonId}`}
-            className="rounded-lg border px-5 py-3"
-          >
-            Back to Season
+        {/* Breadcrumb */}
+        <nav aria-label="breadcrumb" className="mb-6 flex items-center gap-2 text-sm text-gray-400">
+          <Link href="/dashboard" className="transition-colors hover:text-gray-700">
+            Dashboard
           </Link>
-        </div>
-      </div>
+          <span>/</span>
+          <Link href={`/leagues/${id}`} className="transition-colors hover:text-gray-700">
+            {league.league_name}
+          </Link>
+          <span>/</span>
+          <Link href={`/leagues/${id}/seasons/${seasonId}`} className="transition-colors hover:text-gray-700">
+            {season.season_name}
+          </Link>
+          <span>/</span>
+          <span className="font-medium text-gray-700">Schedule</span>
+        </nav>
 
-      {errorMessage && (
-        <div className="mb-6 rounded-lg border border-red-300 bg-red-50 p-4 text-red-700">
-          {errorMessage}
-        </div>
-      )}
+        {/* Header */}
+        <div className="mb-8 flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight text-gray-900">
+              Season Schedule
+            </h1>
+            <p className="mt-2 text-sm text-gray-500">{season.season_name}</p>
+          </div>
 
-      {games.length === 0 ? (
-        <div className="rounded-xl border bg-white p-6 shadow-sm">
-          <h2 className="text-xl font-semibold">No schedule created</h2>
-          <p className="mt-2 text-gray-600">
-            Generate schedule placeholders to create all regular season and playoff game slots for this season.
-          </p>
-
-          <button
-            type="button"
-            onClick={handleGenerateSchedule}
-            disabled={generating}
-            className="mt-4 rounded-lg bg-black px-5 py-3 text-white disabled:opacity-50"
-          >
-            {generating ? "Generating..." : "Generate Schedule"}
-          </button>
-        </div>
-      ) : (
-        <div className="space-y-8">
-          <section>
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-2xl font-semibold">Regular Season</h2>
-              <p className="text-sm text-gray-500">
-                {regularGames.length} game{regularGames.length === 1 ? "" : "s"}
-              </p>
-            </div>
-
-            {regularGames.length === 0 ? (
-              <div className="rounded-xl border bg-white p-6 shadow-sm text-gray-600">
-                No regular season games created.
-              </div>
-            ) : (
-              <div className="grid gap-4">
-                {regularGames.map(renderGameCard)}
-              </div>
+          <div className="flex shrink-0 gap-2">
+            {games.length > 0 && (
+              <Link
+                href={`/leagues/${id}/seasons/${seasonId}/schedule/new`}
+                className="rounded-lg bg-black px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-gray-800"
+              >
+                Add Game
+              </Link>
             )}
-          </section>
-
-          <section>
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-2xl font-semibold">Playoffs</h2>
-              <p className="text-sm text-gray-500">
-                {playoffGames.length} game{playoffGames.length === 1 ? "" : "s"}
-              </p>
-            </div>
-
-            {playoffGames.length === 0 ? (
-              <div className="rounded-xl border bg-white p-6 shadow-sm text-gray-600">
-                No playoff games created.
-              </div>
-            ) : (
-              <div className="grid gap-4">
-                {playoffGames.map(renderGameCard)}
-              </div>
-            )}
-          </section>
+            <Link
+              href={`/leagues/${id}/seasons/${seasonId}`}
+              className="rounded-lg border bg-white px-4 py-2 text-sm font-medium shadow-sm hover:bg-gray-50"
+            >
+              Back to Season
+            </Link>
+          </div>
         </div>
-      )}
-    </main>
+
+        {/* Error */}
+        {errorMessage && (
+          <div className="mb-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+            {errorMessage}
+          </div>
+        )}
+
+        {/* Empty state */}
+        {games.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-gray-300 bg-white p-12 text-center shadow-sm">
+            <p className="text-base font-semibold text-gray-900">No schedule created</p>
+            <p className="mt-2 text-sm text-gray-500">
+              Generate schedule placeholders to create all regular season and playoff game slots for this season.
+            </p>
+            <button
+              type="button"
+              onClick={handleGenerateSchedule}
+              disabled={generating}
+              className="mt-6 rounded-lg bg-black px-6 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-gray-800 disabled:opacity-50"
+            >
+              {generating ? "Generating..." : "Generate Schedule"}
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-10">
+
+            {/* Regular Season */}
+            <section>
+              <div className="mb-3 flex items-center gap-3">
+                <h2 className="text-base font-semibold text-gray-900">Regular Season</h2>
+                <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-500">
+                  {regularGames.length} game{regularGames.length === 1 ? "" : "s"}
+                </span>
+              </div>
+
+              {regularGames.length === 0 ? (
+                <div className="rounded-xl border bg-white p-6 text-sm text-gray-500 shadow-sm">
+                  No regular season games created.
+                </div>
+              ) : (
+                <div className="grid gap-3">
+                  {regularGames.map(renderGameCard)}
+                </div>
+              )}
+            </section>
+
+            {/* Playoffs */}
+            <section>
+              <div className="mb-3 flex items-center gap-3">
+                <h2 className="text-base font-semibold text-gray-900">Playoffs</h2>
+                <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-500">
+                  {playoffGames.length} game{playoffGames.length === 1 ? "" : "s"}
+                </span>
+              </div>
+
+              {playoffGames.length === 0 ? (
+                <div className="rounded-xl border bg-white p-6 text-sm text-gray-500 shadow-sm">
+                  No playoff games created.
+                </div>
+              ) : (
+                <div className="grid gap-3">
+                  {playoffGames.map(renderGameCard)}
+                </div>
+              )}
+            </section>
+
+          </div>
+        )}
+
+      </main>
+    </div>
   );
 }

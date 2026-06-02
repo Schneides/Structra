@@ -13,6 +13,7 @@ type FinanceEditorProps = {
     parentLeagueId: number;
     seasonId: number;
     leagueName: string;
+    seasonName: string;
     regularGames: number;
     numTeams: number;
     expectedTotalPlayers: number;
@@ -73,6 +74,7 @@ export default function FinanceEditor({
     parentLeagueId,
     seasonId,
     leagueName,
+    seasonName,
     regularGames,
     numTeams,
     expectedTotalPlayers,
@@ -167,13 +169,9 @@ export default function FinanceEditor({
                 : estimatedPlayoffGamesPerTeam;
 
         // --- League game counts ---
-        // Regular season: each team plays regularGames, each game involves 2 teams
         const regularSeasonLeagueGames =
             numTeams > 0 ? (numTeams * regularGames) / 2 : 0;
 
-        // Playoff league games depend on allocation model:
-        // - playoff_teams_only: only playoff teams generate games
-        // - all_players: same game count but cost spread across everyone
         const playoffLeagueGames =
             playoffTeams > 0
                 ? (playoffTeams * playoffGamesForCosting) / 2
@@ -193,7 +191,6 @@ export default function FinanceEditor({
 
         // --- Regular season costs ---
         const regularIceTotal = regularSeasonLeagueGames * iceCostPerGame;
-        // Overhead is attributed proportionally to regular vs playoff games
         const regularOverheadShare =
             totalLeagueGames > 0
                 ? regularSeasonLeagueGames / totalLeagueGames
@@ -291,7 +288,6 @@ export default function FinanceEditor({
         const regularSeasonPlayerFee = reg.playerCostPerGame * regularGames;
 
         // --- Playoff financials ---
-        // Who pays for playoff costs?
         const playoffPayingPlayers =
             playoffCostAllocation === "playoff_teams_only"
                 ? (effectivePayingPlayers / (numTeams || 1)) * (playoffTeams || 0)
@@ -310,13 +306,12 @@ export default function FinanceEditor({
         // --- Combined totals ---
         const totalSeasonCost = reg.totalCost + po.totalCost;
 
-        // What the commissioner will actually bill depends on the payment model
         const isCombined = financePaymentModel === "regular_plus_playoff_actual";
         const combinedPlayerFee = regularSeasonPlayerFee + playoffPlayerFee;
 
         const suggestedPlayerFee = isCombined
             ? combinedPlayerFee
-            : regularSeasonPlayerFee; // split model: show reg season fee as primary
+            : regularSeasonPlayerFee;
 
         const suggestedTeamFee =
             numTeams > 0 ? totalSeasonCost / numTeams : 0;
@@ -325,26 +320,21 @@ export default function FinanceEditor({
         const billedTeamFee = roundUpDollar(suggestedTeamFee);
 
         return {
-            // Player base
             rosteredPlayers,
             totalPlayersForDisplay,
             exemptionEquivalent,
             effectivePayingPlayers,
-            // Playoff structure
             playoffRounds,
             worstCasePlayoffGamesPerTeam,
             estimatedPlayoffGamesPerTeam,
             playoffGamesForCosting,
             playoffPayingPlayers,
-            // Game counts
             regularSeasonLeagueGames,
             playoffLeagueGames,
             totalLeagueGames,
-            // Refs
             regularRefAppearances,
             playoffRefAppearances,
             totalRefAppearances,
-            // Regular season breakdown
             regularIceTotal,
             regularOverhead,
             regularBaseDirectCost,
@@ -354,7 +344,6 @@ export default function FinanceEditor({
             totalRegularSeasonCost: reg.totalCost,
             regularSeasonPlayerFee,
             regularPlayerCostPerGame: reg.playerCostPerGame,
-            // Playoff breakdown
             playoffIceTotal,
             playoffOverhead,
             playoffBaseDirectCost,
@@ -364,7 +353,6 @@ export default function FinanceEditor({
             totalPlayoffCost: po.totalCost,
             playoffPlayerFee,
             playoffPlayerCostPerGame: po.playerCostPerGame,
-            // Combined
             totalSeasonCost,
             suggestedPlayerFee,
             suggestedTeamFee,
@@ -422,13 +410,11 @@ export default function FinanceEditor({
         const billedCombinedFee = roundUpDollar(totals.combinedPlayerFee);
         const billedTeamFee = roundUpDollar(totals.suggestedTeamFee);
 
-        // The fee we'll actually write to players depends on the payment model
         const feeForPlayers = totals.isCombined
             ? billedCombinedFee
             : billedRegularFee;
 
         const seasonPayload = {
-            // Cost inputs
             ice_cost_per_game: roundMoney(iceCostPerGame),
             reserve_percent: reservePercent,
             ref_model: refModel,
@@ -441,19 +427,16 @@ export default function FinanceEditor({
             one_time_admin_cost: expenseMode === "monthly" ? roundMoney(oneTimeAdminCost) : 0,
             per_player_variable_cost: 0,
 
-            // Playoff model choices
             finance_payment_model: financePaymentModel,
             playoff_cost_allocation: playoffCostAllocation,
             playoff_costing_model: playoffCostingModel,
             playoff_payment_model: playoffPaymentModel,
 
-            // Derived playoff structure
             playoff_rounds: totals.playoffRounds,
             playoff_worst_case_games: totals.worstCasePlayoffGamesPerTeam,
             estimated_playoff_games: totals.estimatedPlayoffGamesPerTeam,
             regular_season_total_games: totals.regularSeasonLeagueGames,
 
-            // Fee outputs
             suggested_player_fee: feeForPlayers,
             suggested_team_fee: billedTeamFee,
             regular_season_player_fee: billedRegularFee,
@@ -475,7 +458,6 @@ export default function FinanceEditor({
             return;
         }
 
-        // Recalculate every player's amount_due
         const { data: playersData, error: playersError } = await supabase
             .from("players")
             .select("id, amount_paid, payment_exemption_percent")
@@ -494,8 +476,6 @@ export default function FinanceEditor({
             const exemptionPercent = Number(player.payment_exemption_percent ?? 0);
             const amountPaid = Number(player.amount_paid ?? 0);
 
-            // In split model, players are only billed the regular season fee now.
-            // Playoff fees are added later when their team qualifies.
             const adjustedDue = roundUpDollar(
                 feeForPlayers * (1 - exemptionPercent / 100)
             );
@@ -528,577 +508,625 @@ export default function FinanceEditor({
     const isSplitModel = financePaymentModel === "regular_season_only";
 
     return (
-        <main className="mx-auto max-w-7xl px-6 py-10">
-            {/* Header */}
-            <div className="mb-8 flex items-start justify-between gap-6">
-                <div>
-                    <h1 className="text-3xl font-bold">Season Finance</h1>
-                    <p className="mt-2 text-gray-600">{leagueName}</p>
-                    <p className="mt-1 text-sm text-gray-500">
-                        Estimate season pricing before rosters or draft picks are finalized.
-                        Final fees may change when real players, exemptions, or schedule
-                        details are updated.
-                    </p>
-                </div>
-                <Link
-                    href={`/leagues/${parentLeagueId}/seasons/${seasonId}`}
-                    className="flex min-h-[48px] items-center justify-center rounded-lg border px-5 py-3 text-center"
-                >
-                    Back to Season
-                </Link>
-            </div>
+        <div className="min-h-screen bg-gray-50">
+            <main className="mx-auto max-w-6xl px-6 py-8">
 
-            {/* Hero summary card */}
-            <div className="mb-8 rounded-2xl border bg-black p-6 text-white shadow-sm">
-                <div className="grid gap-6 md:grid-cols-4">
-                    <div className="md:col-span-2">
-                        <p className="text-sm text-gray-300">
-                            {isSplitModel ? "Regular Season Player Fee" : "Estimated Player Fee"}
-                        </p>
-                        <p className="mt-2 text-5xl font-bold">
-                            ${roundUpDollar(totals.isCombined
-                                ? totals.combinedPlayerFee
-                                : totals.regularSeasonPlayerFee
-                            ).toLocaleString()}
-                        </p>
-                        <p className="mt-2 text-sm text-gray-300">
-                            {isSplitModel
-                                ? `+$${roundUpDollar(totals.playoffPlayerFee).toLocaleString()} playoff fee billed separately to qualifying teams.`
-                                : `Exact calculated fee: $${formatCurrency(totals.combinedPlayerFee)}. Rounded up for billing protection.`}
-                        </p>
-                    </div>
+                {/* Breadcrumb */}
+                <nav aria-label="breadcrumb" className="mb-6 flex items-center gap-2 text-sm text-gray-400">
+                    <Link href="/dashboard" className="transition-colors hover:text-gray-700">
+                        Dashboard
+                    </Link>
+                    <span>/</span>
+                    <Link href={`/leagues/${parentLeagueId}`} className="transition-colors hover:text-gray-700">
+                        {leagueName}
+                    </Link>
+                    <span>/</span>
+                    <Link href={`/leagues/${parentLeagueId}/seasons/${seasonId}`} className="transition-colors hover:text-gray-700">
+                        {seasonName}
+                    </Link>
+                    <span>/</span>
+                    <span className="font-medium text-gray-700">Finance</span>
+                </nav>
 
+                {/* Header */}
+                <div className="mb-8 flex items-start justify-between gap-6">
                     <div>
-                        <p className="text-sm text-gray-300">Estimated Team Fee</p>
-                        <p className="mt-2 text-3xl font-bold">
-                            ${totals.billedTeamFee.toLocaleString()}
-                        </p>
-                        <p className="mt-2 text-sm text-gray-300">
-                            Exact: ${formatCurrency(totals.suggestedTeamFee)}
-                        </p>
-                    </div>
-
-                    <div>
-                        <p className="text-sm text-gray-300">Total Season Cost</p>
-                        <p className="mt-2 text-3xl font-bold">
-                            ${formatCurrency(totals.totalSeasonCost)}
-                        </p>
-                        <p className="mt-2 text-sm text-gray-300">
-                            Includes refs, expenses, and reserve.
+                        <h1 className="text-3xl font-bold tracking-tight text-gray-900">
+                            Season Finance
+                        </h1>
+                        <p className="mt-2 text-sm text-gray-500">{seasonName}</p>
+                        <p className="mt-1 text-sm text-gray-400">
+                            Estimate season pricing before rosters or draft picks are finalized.
+                            Final fees may change when real players, exemptions, or schedule
+                            details are updated.
                         </p>
                     </div>
-                </div>
-
-                {/* Split model: show both fees clearly */}
-                {isSplitModel && (
-                    <div className="mt-6 grid gap-4 border-t border-gray-700 pt-6 md:grid-cols-2">
-                        <div className="rounded-xl bg-white/10 p-4">
-                            <p className="text-sm text-gray-300">Regular Season Fee</p>
-                            <p className="mt-1 text-2xl font-bold">
-                                ${roundUpDollar(totals.regularSeasonPlayerFee).toLocaleString()}
-                            </p>
-                            <p className="mt-1 text-xs text-gray-400">
-                                Billed to all players upfront.
-                            </p>
-                        </div>
-                        <div className="rounded-xl bg-white/10 p-4">
-                            <p className="text-sm text-gray-300">Playoff Fee (per qualifying player)</p>
-                            <p className="mt-1 text-2xl font-bold">
-                                ${roundUpDollar(totals.playoffPlayerFee).toLocaleString()}
-                            </p>
-                            <p className="mt-1 text-xs text-gray-400">
-                                {playoffCostAllocation === "playoff_teams_only"
-                                    ? "Billed only to players on teams that qualify."
-                                    : "Shared across all players when playoffs begin."}
-                            </p>
-                        </div>
-                    </div>
-                )}
-            </div>
-
-            {/* Estimate warning */}
-            <div className="mb-8 rounded-xl border border-yellow-300 bg-yellow-50 p-5 text-sm text-yellow-900">
-                <p className="font-semibold">This is a projected finance estimate.</p>
-                <p className="mt-1">
-                    This number is useful for recruiting and early planning. Final player
-                    fees may change after rosters, draft results, player exemptions, referee
-                    settings, expenses, or schedule details are finalized.
-                </p>
-            </div>
-
-            <div className="grid gap-6 lg:grid-cols-5">
-                {/* ---- Left column: inputs ---- */}
-                <div className="space-y-6 lg:col-span-3">
-
-                    {/* 1. League Structure */}
-                    <div className="rounded-xl border bg-white p-6 shadow-sm">
-                        <div className="mb-5">
-                            <h2 className="text-2xl font-semibold">1. League Structure</h2>
-                            <p className="mt-1 text-sm text-gray-600">
-                                These values come from season setup and control the overall pricing base.
-                            </p>
-                        </div>
-                        <div className="grid gap-4 md:grid-cols-2">
-                            <div>
-                                <label className="mb-2 block text-sm font-medium">Number of Teams</label>
-                                <input type="number" value={numTeams} disabled
-                                    className="w-full rounded-lg border bg-gray-100 px-4 py-3" />
-                            </div>
-                            <div>
-                                <label className="mb-2 block text-sm font-medium">Expected Total Players</label>
-                                <input type="number" value={expectedTotalPlayers} disabled
-                                    className="w-full rounded-lg border bg-gray-100 px-4 py-3" />
-                                <p className="mt-1 text-xs text-gray-500">Used before actual rosters exist.</p>
-                            </div>
-                            <div>
-                                <label className="mb-2 block text-sm font-medium">Regular Season Games Per Team</label>
-                                <input type="number" value={regularGames} disabled
-                                    className="w-full rounded-lg border bg-gray-100 px-4 py-3" />
-                            </div>
-                            <div>
-                                <label className="mb-2 block text-sm font-medium">Teams in Playoffs</label>
-                                <input type="number" value={playoffTeams} disabled
-                                    className="w-full rounded-lg border bg-gray-100 px-4 py-3" />
-                                <p className="mt-1 text-xs text-gray-500">
-                                    {totals.playoffRounds > 0
-                                        ? `${totals.playoffRounds} playoff round${totals.playoffRounds !== 1 ? "s" : ""} derived automatically.`
-                                        : "Set in season setup."}
-                                </p>
-                            </div>
-                            <div>
-                                <label className="mb-2 block text-sm font-medium">Max Games Per Playoff Round</label>
-                                <input type="number" value={playoffGamesPerRoundForCosting} disabled
-                                    className="w-full rounded-lg border bg-gray-100 px-4 py-3" />
-                                <p className="mt-1 text-xs text-gray-500">
-                                    Worst case: {totals.worstCasePlayoffGamesPerTeam} playoff games per team.
-                                </p>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* 2. Cost Inputs */}
-                    <div className="rounded-xl border bg-white p-6 shadow-sm">
-                        <div className="mb-5">
-                            <h2 className="text-2xl font-semibold">2. Cost Inputs</h2>
-                            <p className="mt-1 text-sm text-gray-600">
-                                Enter the major league costs the commissioner needs to recover.
-                            </p>
-                        </div>
-                        <div className="space-y-4">
-                            <div>
-                                <label className="mb-2 block text-sm font-medium">Ice / Facility Cost Per Game</label>
-                                <input type="number" value={iceCostPerGame}
-                                    onChange={(e) => setIceCostPerGame(formatInputNumber(Number(e.target.value)))}
-                                    className="w-full rounded-lg border px-4 py-3 outline-none focus:ring-2 focus:ring-black" />
-                            </div>
-                            <div>
-                                <label className="mb-2 block text-sm font-medium">
-                                    Are your league expenses monthly or a total season cost?
-                                </label>
-                                <select value={expenseMode} onChange={(e) => setExpenseMode(e.target.value)}
-                                    className="w-full rounded-lg border px-4 py-3 outline-none focus:ring-2 focus:ring-black">
-                                    <option value="monthly">Monthly</option>
-                                    <option value="season_total">Total For Season</option>
-                                </select>
-                            </div>
-                            {expenseMode === "monthly" ? (
-                                <div className="grid gap-4 md:grid-cols-3">
-                                    <div>
-                                        <label className="mb-2 block text-sm font-medium">Monthly Expense Cost</label>
-                                        <input type="number" value={expenseAmount}
-                                            onChange={(e) => setExpenseAmount(formatInputNumber(Number(e.target.value)))}
-                                            className="w-full rounded-lg border px-4 py-3 outline-none focus:ring-2 focus:ring-black" />
-                                        <p className="mt-1 text-xs text-gray-500">
-                                            Example: admin tools, league software, monthly rentals.
-                                        </p>
-                                    </div>
-                                    <div>
-                                        <label className="mb-2 block text-sm font-medium">Season Length In Months</label>
-                                        <input type="number" value={seasonLengthMonths}
-                                            onChange={(e) => setSeasonLengthMonths(formatInputNumber(Number(e.target.value)))}
-                                            className="w-full rounded-lg border px-4 py-3 outline-none focus:ring-2 focus:ring-black" />
-                                    </div>
-                                    <div>
-                                        <label className="mb-2 block text-sm font-medium">Other One-Time Season Expenses</label>
-                                        <input type="number" value={oneTimeAdminCost}
-                                            onChange={(e) => setOneTimeAdminCost(formatInputNumber(Number(e.target.value)))}
-                                            className="w-full rounded-lg border px-4 py-3 outline-none focus:ring-2 focus:ring-black" />
-                                        <p className="mt-1 text-xs text-gray-500">
-                                            Only use this for costs outside the monthly expenses.
-                                        </p>
-                                    </div>
-                                </div>
-                            ) : (
-                                <div>
-                                    <label className="mb-2 block text-sm font-medium">Total Season Expense Amount</label>
-                                    <input type="number" value={expenseAmount}
-                                        onChange={(e) => setExpenseAmount(formatInputNumber(Number(e.target.value)))}
-                                        className="w-full rounded-lg border px-4 py-3 outline-none focus:ring-2 focus:ring-black" />
-                                    <p className="mt-1 text-xs text-gray-500">
-                                        Use this when the league has one total expense budget instead of monthly costs.
-                                    </p>
-                                </div>
-                            )}
-                        </div>
-                    </div>
-
-                    {/* 3. Referee Model */}
-                    <div className="rounded-xl border bg-white p-6 shadow-sm">
-                        <div className="mb-5">
-                            <h2 className="text-2xl font-semibold">3. Referee Model</h2>
-                            <p className="mt-1 text-sm text-gray-600">
-                                Choose how officials are paid or credited.
-                            </p>
-                        </div>
-                        <div className="space-y-4">
-                            <div>
-                                <label className="mb-2 block text-sm font-medium">Referee Cost Method</label>
-                                <select value={refModel} onChange={(e) => setRefModel(e.target.value)}
-                                    className="w-full rounded-lg border px-4 py-3 outline-none focus:ring-2 focus:ring-black">
-                                    <option value="external">External Refs</option>
-                                    <option value="internal">Internal Refs</option>
-                                </select>
-                                <div className="mt-3 rounded-lg bg-gray-50 p-4 text-sm text-gray-600">
-                                    <p className="font-medium text-gray-800">
-                                        {refModel === "internal" ? "Internal Refs" : "External Refs"}
-                                    </p>
-                                    <p className="mt-1">
-                                        {refModel === "internal"
-                                            ? "Use this when league players referee games they are not playing in. The system values each ref appearance based on the calculated player cost per game."
-                                            : "Use this when you hire officials at a set price per ref per game. Total ref cost is calculated from refs per game, total games, and cost per ref."}
-                                    </p>
-                                </div>
-                            </div>
-                            <div className="grid gap-4 md:grid-cols-3">
-                                <div>
-                                    <label className="mb-2 block text-sm font-medium">Refs Per Game</label>
-                                    <input type="number" value={refsPerGame}
-                                        onChange={(e) => setRefsPerGame(formatInputNumber(Number(e.target.value)))}
-                                        className="w-full rounded-lg border px-4 py-3 outline-none focus:ring-2 focus:ring-black" />
-                                </div>
-                                {refModel === "external" && (
-                                    <div>
-                                        <label className="mb-2 block text-sm font-medium">Cost Per Ref Per Game</label>
-                                        <input type="number" value={refCostPerGame}
-                                            onChange={(e) => setRefCostPerGame(formatInputNumber(Number(e.target.value)))}
-                                            className="w-full rounded-lg border px-4 py-3 outline-none focus:ring-2 focus:ring-black" />
-                                    </div>
-                                )}
-                                <div>
-                                    <label className="mb-2 block text-sm font-medium">Reserve / Buffer Percent</label>
-                                    <input type="number" value={reservePercent}
-                                        onChange={(e) => setReservePercent(formatInputNumber(Number(e.target.value)))}
-                                        className="w-full rounded-lg border px-4 py-3 outline-none focus:ring-2 focus:ring-black" />
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* 4. Playoff Billing Model — NEW SECTION */}
-                    <div className="rounded-xl border border-blue-200 bg-blue-50 p-6 shadow-sm">
-                        <div className="mb-5">
-                            <h2 className="text-2xl font-semibold">4. Playoff Billing Model</h2>
-                            <p className="mt-1 text-sm text-gray-600">
-                                Choose how playoff costs are estimated and charged to players.
-                            </p>
-                        </div>
-                        <div className="space-y-5">
-
-                            {/* Finance payment model */}
-                            <div>
-                                <label className="mb-2 block text-sm font-medium">How do you want to charge players?</label>
-                                <select value={financePaymentModel}
-                                    onChange={(e) => setFinancePaymentModel(e.target.value)}
-                                    className="w-full rounded-lg border bg-white px-4 py-3 outline-none focus:ring-2 focus:ring-black">
-                                    <option value="regular_plus_playoff_actual">
-                                        Combined — one fee covers regular season and playoffs
-                                    </option>
-                                    <option value="regular_season_only">
-                                        Split — regular season fee now, playoff fee billed separately
-                                    </option>
-                                </select>
-                                <div className="mt-3 rounded-lg bg-white p-4 text-sm text-gray-600 border">
-                                    {financePaymentModel === "regular_plus_playoff_actual" ? (
-                                        <>
-                                            <p className="font-medium text-gray-800">Combined billing</p>
-                                            <p className="mt-1">
-                                                Every player pays one upfront fee that covers both regular season
-                                                and their share of projected playoff costs. Simpler for players,
-                                                no extra billing step at playoff time.
-                                            </p>
-                                        </>
-                                    ) : (
-                                        <>
-                                            <p className="font-medium text-gray-800">Split billing</p>
-                                            <p className="mt-1">
-                                                Players pay the regular season fee now. When playoffs begin,
-                                                the system will bill the playoff fee only to players on
-                                                qualifying teams. Fairer for teams that miss playoffs.
-                                            </p>
-                                        </>
-                                    )}
-                                </div>
-                            </div>
-
-                            {/* Playoff cost allocation */}
-                            <div>
-                                <label className="mb-2 block text-sm font-medium">Who pays for playoff costs?</label>
-                                <select value={playoffCostAllocation}
-                                    onChange={(e) => setPlayoffCostAllocation(e.target.value)}
-                                    className="w-full rounded-lg border bg-white px-4 py-3 outline-none focus:ring-2 focus:ring-black">
-                                    <option value="playoff_teams_only">
-                                        Playoff teams only — only qualifying teams share playoff costs
-                                    </option>
-                                    <option value="all_players">
-                                        All players — playoff costs spread across the whole league
-                                    </option>
-                                </select>
-                                <p className="mt-2 text-xs text-gray-500">
-                                    {playoffCostAllocation === "playoff_teams_only"
-                                        ? `Only the ${playoffTeams} playoff teams bear the playoff ice and ref costs.`
-                                        : "Playoff costs are divided equally across all players in the league."}
-                                </p>
-                            </div>
-
-                            {/* Playoff costing model */}
-                            <div>
-                                <label className="mb-2 block text-sm font-medium">How should playoff costs be estimated?</label>
-                                <select value={playoffCostingModel}
-                                    onChange={(e) => setPlayoffCostingModel(e.target.value)}
-                                    className="w-full rounded-lg border bg-white px-4 py-3 outline-none focus:ring-2 focus:ring-black">
-                                    <option value="worst_case">
-                                        Worst case — assume every series goes the maximum games
-                                    </option>
-                                    <option value="estimated">
-                                        Estimated — assume average series length (~60% of max)
-                                    </option>
-                                </select>
-                                <div className="mt-2 rounded-lg bg-white border p-3 text-xs text-gray-600">
-                                    <span className="font-medium">
-                                        {playoffCostingModel === "worst_case"
-                                            ? `Worst case: ${totals.worstCasePlayoffGamesPerTeam} games per team `
-                                            : `Estimated: ${totals.estimatedPlayoffGamesPerTeam} games per team `}
-                                    </span>
-                                    ({totals.playoffRounds} round{totals.playoffRounds !== 1 ? "s" : ""} × {" "}
-                                    {playoffCostingModel === "worst_case"
-                                        ? playoffGamesPerRoundForCosting
-                                        : Math.ceil(playoffGamesPerRoundForCosting * 0.6)}{" "}
-                                    games). We recommend worst case so the league is never short.
-                                </div>
-                            </div>
-
-                            {/* Playoff payment model (only relevant in split billing) */}
-                            {isSplitModel && (
-                                <div>
-                                    <label className="mb-2 block text-sm font-medium">
-                                        When do qualifying teams pay their playoff fee?
-                                    </label>
-                                    <select value={playoffPaymentModel}
-                                        onChange={(e) => setPlayoffPaymentModel(e.target.value)}
-                                        className="w-full rounded-lg border bg-white px-4 py-3 outline-none focus:ring-2 focus:ring-black">
-                                        <option value="pay_as_you_advance">
-                                            Pay as you advance — billed each round
-                                        </option>
-                                        <option value="upfront_at_qualification">
-                                            Upfront at qualification — full playoff fee when team qualifies
-                                        </option>
-                                    </select>
-                                    <p className="mt-2 text-xs text-gray-500">
-                                        {playoffPaymentModel === "pay_as_you_advance"
-                                            ? "Teams are billed per round as they advance. A team eliminated in round 1 only pays for round 1."
-                                            : "Teams pay the full estimated playoff fee as soon as they qualify, regardless of how far they advance."}
-                                    </p>
-                                </div>
-                            )}
-                        </div>
-                    </div>
-
-                    {/* Save button */}
-                    <button
-                        type="button"
-                        onClick={handleSave}
-                        disabled={saving || playersLoading}
-                        className="w-full rounded-lg bg-black px-6 py-4 text-white text-lg font-semibold disabled:opacity-50"
+                    <Link
+                        href={`/leagues/${parentLeagueId}/seasons/${seasonId}`}
+                        className="shrink-0 rounded-lg border bg-white px-4 py-2 text-sm font-medium shadow-sm hover:bg-gray-50"
                     >
-                        {saving ? "Saving..." : "Save Finance Settings"}
-                    </button>
+                        Back to Season
+                    </Link>
                 </div>
 
-                {/* ---- Right column: summary panels ---- */}
-                <div className="space-y-6 lg:col-span-2">
-
-                    {/* Pricing Summary */}
-                    <div className="rounded-xl border bg-white p-6 shadow-sm">
-                        <h2 className="mb-4 text-2xl font-semibold">Pricing Summary</h2>
-                        <div className="space-y-4">
-                            <div className="rounded-lg border bg-gray-50 p-4">
-                                <p className="text-sm text-gray-500">
-                                    {isSplitModel ? "Regular Season Player Fee" : "Estimated Player Fee"}
-                                </p>
-                                <p className="mt-1 text-3xl font-bold">
-                                    ${roundUpDollar(isSplitModel
-                                        ? totals.regularSeasonPlayerFee
-                                        : totals.combinedPlayerFee
-                                    ).toLocaleString()}
-                                </p>
-                                <p className="mt-1 text-xs text-gray-500">
-                                    Exact: ${formatCurrency(isSplitModel
-                                        ? totals.regularSeasonPlayerFee
-                                        : totals.combinedPlayerFee)}
-                                </p>
-                            </div>
-
-                            {isSplitModel && (
-                                <div className="rounded-lg border bg-gray-50 p-4">
-                                    <p className="text-sm text-gray-500">Playoff Fee (qualifying players)</p>
-                                    <p className="mt-1 text-3xl font-bold">
-                                        ${roundUpDollar(totals.playoffPlayerFee).toLocaleString()}
-                                    </p>
-                                    <p className="mt-1 text-xs text-gray-500">
-                                        Exact: ${formatCurrency(totals.playoffPlayerFee)}
-                                    </p>
-                                </div>
-                            )}
-
-                            <div className="rounded-lg border bg-gray-50 p-4">
-                                <p className="text-sm text-gray-500">Player Cost Per Game (Reg Season)</p>
-                                <p className="mt-1 text-xl font-semibold">
-                                    ${formatCurrency(totals.regularPlayerCostPerGame)}
-                                </p>
-                            </div>
-
-                            {totals.playoffRounds > 0 && (
-                                <div className="rounded-lg border bg-gray-50 p-4">
-                                    <p className="text-sm text-gray-500">Player Cost Per Game (Playoffs)</p>
-                                    <p className="mt-1 text-xl font-semibold">
-                                        ${formatCurrency(totals.playoffPlayerCostPerGame)}
-                                    </p>
-                                </div>
-                            )}
-
-                            <div className="rounded-lg border bg-gray-50 p-4">
-                                <p className="text-sm text-gray-500">Estimated Team Fee</p>
-                                <p className="mt-1 text-xl font-semibold">
-                                    ${totals.billedTeamFee.toLocaleString()}
-                                </p>
-                                <p className="mt-1 text-xs text-gray-500">
-                                    Exact: ${formatCurrency(totals.suggestedTeamFee)}
-                                </p>
-                            </div>
+                {/* Hero summary card */}
+                <div className="mb-8 rounded-2xl border bg-black p-6 text-white shadow-sm">
+                    <div className="grid gap-6 md:grid-cols-4">
+                        <div className="md:col-span-2">
+                            <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">
+                                {isSplitModel ? "Regular Season Player Fee" : "Estimated Player Fee"}
+                            </p>
+                            <p className="mt-2 text-4xl font-bold">
+                                ${roundUpDollar(totals.isCombined
+                                    ? totals.combinedPlayerFee
+                                    : totals.regularSeasonPlayerFee
+                                ).toLocaleString()}
+                            </p>
+                            <p className="mt-2 text-sm text-gray-400">
+                                {isSplitModel
+                                    ? `+$${roundUpDollar(totals.playoffPlayerFee).toLocaleString()} playoff fee billed separately to qualifying teams.`
+                                    : `Exact calculated fee: $${formatCurrency(totals.combinedPlayerFee)}. Rounded up for billing protection.`}
+                            </p>
                         </div>
-                    </div>
 
-                    {/* Player Base */}
-                    <div className="rounded-xl border bg-white p-6 shadow-sm">
-                        <h2 className="mb-4 text-2xl font-semibold">Player Base</h2>
-                        <div className="space-y-3 text-sm">
-                            <div className="flex justify-between">
-                                <span>Expected Players</span>
-                                <span className="font-medium">{expectedTotalPlayers}</span>
-                            </div>
-                            <div className="flex justify-between">
-                                <span>Rostered Players</span>
-                                <span className="font-medium">{totals.rosteredPlayers}</span>
-                            </div>
-                            <div className="flex justify-between">
-                                <span>Exemption Equivalent</span>
-                                <span className="font-medium">{totals.exemptionEquivalent.toFixed(2)}</span>
-                            </div>
-                            <div className="flex justify-between border-t pt-3">
-                                <span className="font-semibold">Effective Paying Players</span>
-                                <span className="font-bold">{totals.effectivePayingPlayers.toFixed(2)}</span>
-                            </div>
-                            {playoffTeams > 0 && (
-                                <div className="flex justify-between">
-                                    <span>Playoff-Paying Players</span>
-                                    <span className="font-medium">{totals.playoffPayingPlayers.toFixed(2)}</span>
-                                </div>
-                            )}
-                            <p className="pt-2 text-xs text-gray-500">
-                                Before rosters exist, the estimate uses expected total players.
-                                After players and exemptions are added, this updates based on the
-                                real payable player count.
+                        <div>
+                            <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">
+                                Estimated Team Fee
+                            </p>
+                            <p className="mt-2 text-3xl font-bold">
+                                ${totals.billedTeamFee.toLocaleString()}
+                            </p>
+                            <p className="mt-2 text-sm text-gray-400">
+                                Exact: ${formatCurrency(totals.suggestedTeamFee)}
+                            </p>
+                        </div>
+
+                        <div>
+                            <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">
+                                Total Season Cost
+                            </p>
+                            <p className="mt-2 text-3xl font-bold">
+                                ${formatCurrency(totals.totalSeasonCost)}
+                            </p>
+                            <p className="mt-2 text-sm text-gray-400">
+                                Includes refs, expenses, and reserve.
                             </p>
                         </div>
                     </div>
 
-                    {/* Regular Season Breakdown */}
-                    <div className="rounded-xl border bg-white p-6 shadow-sm">
-                        <h2 className="mb-4 text-2xl font-semibold">Regular Season Breakdown</h2>
-                        <div className="space-y-3 text-sm">
-                            <div className="flex justify-between">
-                                <span>League Games</span>
-                                <span className="font-medium">{totals.regularSeasonLeagueGames}</span>
+                    {/* Split model: show both fees clearly */}
+                    {isSplitModel && (
+                        <div className="mt-6 grid gap-4 border-t border-gray-700 pt-6 md:grid-cols-2">
+                            <div className="rounded-xl bg-white/10 p-4">
+                                <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">
+                                    Regular Season Fee
+                                </p>
+                                <p className="mt-1 text-2xl font-bold">
+                                    ${roundUpDollar(totals.regularSeasonPlayerFee).toLocaleString()}
+                                </p>
+                                <p className="mt-1 text-xs text-gray-400">
+                                    Billed to all players upfront.
+                                </p>
                             </div>
-                            <div className="flex justify-between">
-                                <span>Ice / Facility Cost</span>
-                                <span className="font-medium">${formatCurrency(totals.regularIceTotal)}</span>
-                            </div>
-                            <div className="flex justify-between">
-                                <span>Overhead (proportional)</span>
-                                <span className="font-medium">${formatCurrency(totals.regularOverhead)}</span>
-                            </div>
-                            <div className="flex justify-between">
-                                <span>Ref Cost</span>
-                                <span className="font-medium">${formatCurrency(totals.regularRefTotalCost)}</span>
-                            </div>
-                            <div className="flex justify-between">
-                                <span>Reserve Amount</span>
-                                <span className="font-medium">${formatCurrency(totals.regularReserveAmount)}</span>
-                            </div>
-                            <div className="flex justify-between border-t pt-3 text-base">
-                                <span className="font-semibold">Total Regular Season Cost</span>
-                                <span className="font-bold">${formatCurrency(totals.totalRegularSeasonCost)}</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Playoff Breakdown */}
-                    {playoffTeams > 0 && (
-                        <div className="rounded-xl border bg-white p-6 shadow-sm">
-                            <h2 className="mb-4 text-2xl font-semibold">Playoff Breakdown</h2>
-                            <div className="space-y-3 text-sm">
-                                <div className="flex justify-between">
-                                    <span>Playoff Teams</span>
-                                    <span className="font-medium">{playoffTeams}</span>
-                                </div>
-                                <div className="flex justify-between">
-                                    <span>Playoff Rounds</span>
-                                    <span className="font-medium">{totals.playoffRounds}</span>
-                                </div>
-                                <div className="flex justify-between">
-                                    <span>Games Per Team ({playoffCostingModel === "worst_case" ? "worst case" : "estimated"})</span>
-                                    <span className="font-medium">{totals.playoffGamesForCosting}</span>
-                                </div>
-                                <div className="flex justify-between">
-                                    <span>Total Playoff League Games</span>
-                                    <span className="font-medium">{totals.playoffLeagueGames}</span>
-                                </div>
-                                <div className="flex justify-between">
-                                    <span>Ice / Facility Cost</span>
-                                    <span className="font-medium">${formatCurrency(totals.playoffIceTotal)}</span>
-                                </div>
-                                <div className="flex justify-between">
-                                    <span>Overhead (proportional)</span>
-                                    <span className="font-medium">${formatCurrency(totals.playoffOverhead)}</span>
-                                </div>
-                                <div className="flex justify-between">
-                                    <span>Ref Cost</span>
-                                    <span className="font-medium">${formatCurrency(totals.playoffRefTotalCost)}</span>
-                                </div>
-                                <div className="flex justify-between">
-                                    <span>Reserve Amount</span>
-                                    <span className="font-medium">${formatCurrency(totals.playoffReserveAmount)}</span>
-                                </div>
-                                <div className="flex justify-between border-t pt-3 text-base">
-                                    <span className="font-semibold">Total Playoff Cost</span>
-                                    <span className="font-bold">${formatCurrency(totals.totalPlayoffCost)}</span>
-                                </div>
+                            <div className="rounded-xl bg-white/10 p-4">
+                                <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">
+                                    Playoff Fee (per qualifying player)
+                                </p>
+                                <p className="mt-1 text-2xl font-bold">
+                                    ${roundUpDollar(totals.playoffPlayerFee).toLocaleString()}
+                                </p>
+                                <p className="mt-1 text-xs text-gray-400">
+                                    {playoffCostAllocation === "playoff_teams_only"
+                                        ? "Billed only to players on teams that qualify."
+                                        : "Shared across all players when playoffs begin."}
+                                </p>
                             </div>
                         </div>
                     )}
                 </div>
-            </div>
-        </main>
+
+                {/* Estimate warning */}
+                <div className="mb-8 rounded-xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-800">
+                    <p className="font-semibold">This is a projected finance estimate.</p>
+                    <p className="mt-1">
+                        This number is useful for recruiting and early planning. Final player
+                        fees may change after rosters, draft results, player exemptions, referee
+                        settings, expenses, or schedule details are finalized.
+                    </p>
+                </div>
+
+                <div className="grid gap-6 lg:grid-cols-5">
+
+                    {/* ---- Left column: inputs ---- */}
+                    <div className="space-y-6 lg:col-span-3">
+
+                        {/* 1. League Structure */}
+                        <div className="rounded-xl border bg-white p-6 shadow-sm">
+                            <div className="mb-5">
+                                <h2 className="text-base font-semibold text-gray-900">
+                                    1. League Structure
+                                </h2>
+                                <p className="mt-1 text-sm text-gray-500">
+                                    These values come from season setup and control the overall pricing base.
+                                </p>
+                            </div>
+                            <div className="grid gap-4 md:grid-cols-2">
+                                <div>
+                                    <label className="mb-2 block text-sm font-medium">Number of Teams</label>
+                                    <input type="number" value={numTeams} disabled
+                                        className="w-full rounded-lg border bg-gray-100 px-4 py-3" />
+                                </div>
+                                <div>
+                                    <label className="mb-2 block text-sm font-medium">Expected Total Players</label>
+                                    <input type="number" value={expectedTotalPlayers} disabled
+                                        className="w-full rounded-lg border bg-gray-100 px-4 py-3" />
+                                    <p className="mt-1 text-xs text-gray-500">Used before actual rosters exist.</p>
+                                </div>
+                                <div>
+                                    <label className="mb-2 block text-sm font-medium">Regular Season Games Per Team</label>
+                                    <input type="number" value={regularGames} disabled
+                                        className="w-full rounded-lg border bg-gray-100 px-4 py-3" />
+                                </div>
+                                <div>
+                                    <label className="mb-2 block text-sm font-medium">Teams in Playoffs</label>
+                                    <input type="number" value={playoffTeams} disabled
+                                        className="w-full rounded-lg border bg-gray-100 px-4 py-3" />
+                                    <p className="mt-1 text-xs text-gray-500">
+                                        {totals.playoffRounds > 0
+                                            ? `${totals.playoffRounds} playoff round${totals.playoffRounds !== 1 ? "s" : ""} derived automatically.`
+                                            : "Set in season setup."}
+                                    </p>
+                                </div>
+                                <div>
+                                    <label className="mb-2 block text-sm font-medium">Max Games Per Playoff Round</label>
+                                    <input type="number" value={playoffGamesPerRoundForCosting} disabled
+                                        className="w-full rounded-lg border bg-gray-100 px-4 py-3" />
+                                    <p className="mt-1 text-xs text-gray-500">
+                                        Worst case: {totals.worstCasePlayoffGamesPerTeam} playoff games per team.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* 2. Cost Inputs */}
+                        <div className="rounded-xl border bg-white p-6 shadow-sm">
+                            <div className="mb-5">
+                                <h2 className="text-base font-semibold text-gray-900">
+                                    2. Cost Inputs
+                                </h2>
+                                <p className="mt-1 text-sm text-gray-500">
+                                    Enter the major league costs the commissioner needs to recover.
+                                </p>
+                            </div>
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="mb-2 block text-sm font-medium">Ice / Facility Cost Per Game</label>
+                                    <input type="number" value={iceCostPerGame}
+                                        onChange={(e) => setIceCostPerGame(formatInputNumber(Number(e.target.value)))}
+                                        className="w-full rounded-lg border px-4 py-3 outline-none focus:ring-2 focus:ring-black" />
+                                </div>
+                                <div>
+                                    <label className="mb-2 block text-sm font-medium">
+                                        Are your league expenses monthly or a total season cost?
+                                    </label>
+                                    <select value={expenseMode} onChange={(e) => setExpenseMode(e.target.value)}
+                                        className="w-full rounded-lg border px-4 py-3 outline-none focus:ring-2 focus:ring-black">
+                                        <option value="monthly">Monthly</option>
+                                        <option value="season_total">Total For Season</option>
+                                    </select>
+                                </div>
+                                {expenseMode === "monthly" ? (
+                                    <div className="grid gap-4 md:grid-cols-3">
+                                        <div>
+                                            <label className="mb-2 block text-sm font-medium">Monthly Expense Cost</label>
+                                            <input type="number" value={expenseAmount}
+                                                onChange={(e) => setExpenseAmount(formatInputNumber(Number(e.target.value)))}
+                                                className="w-full rounded-lg border px-4 py-3 outline-none focus:ring-2 focus:ring-black" />
+                                            <p className="mt-1 text-xs text-gray-500">
+                                                Example: admin tools, league software, monthly rentals.
+                                            </p>
+                                        </div>
+                                        <div>
+                                            <label className="mb-2 block text-sm font-medium">Season Length In Months</label>
+                                            <input type="number" value={seasonLengthMonths}
+                                                onChange={(e) => setSeasonLengthMonths(formatInputNumber(Number(e.target.value)))}
+                                                className="w-full rounded-lg border px-4 py-3 outline-none focus:ring-2 focus:ring-black" />
+                                        </div>
+                                        <div>
+                                            <label className="mb-2 block text-sm font-medium">Other One-Time Season Expenses</label>
+                                            <input type="number" value={oneTimeAdminCost}
+                                                onChange={(e) => setOneTimeAdminCost(formatInputNumber(Number(e.target.value)))}
+                                                className="w-full rounded-lg border px-4 py-3 outline-none focus:ring-2 focus:ring-black" />
+                                            <p className="mt-1 text-xs text-gray-500">
+                                                Only use this for costs outside the monthly expenses.
+                                            </p>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div>
+                                        <label className="mb-2 block text-sm font-medium">Total Season Expense Amount</label>
+                                        <input type="number" value={expenseAmount}
+                                            onChange={(e) => setExpenseAmount(formatInputNumber(Number(e.target.value)))}
+                                            className="w-full rounded-lg border px-4 py-3 outline-none focus:ring-2 focus:ring-black" />
+                                        <p className="mt-1 text-xs text-gray-500">
+                                            Use this when the league has one total expense budget instead of monthly costs.
+                                        </p>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* 3. Referee Model */}
+                        <div className="rounded-xl border bg-white p-6 shadow-sm">
+                            <div className="mb-5">
+                                <h2 className="text-base font-semibold text-gray-900">
+                                    3. Referee Model
+                                </h2>
+                                <p className="mt-1 text-sm text-gray-500">
+                                    Choose how officials are paid or credited.
+                                </p>
+                            </div>
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="mb-2 block text-sm font-medium">Referee Cost Method</label>
+                                    <select value={refModel} onChange={(e) => setRefModel(e.target.value)}
+                                        className="w-full rounded-lg border px-4 py-3 outline-none focus:ring-2 focus:ring-black">
+                                        <option value="external">External Refs</option>
+                                        <option value="internal">Internal Refs</option>
+                                    </select>
+                                    <div className="mt-3 rounded-lg bg-gray-50 p-4 text-sm text-gray-600">
+                                        <p className="font-medium text-gray-800">
+                                            {refModel === "internal" ? "Internal Refs" : "External Refs"}
+                                        </p>
+                                        <p className="mt-1">
+                                            {refModel === "internal"
+                                                ? "Use this when league players referee games they are not playing in. The system values each ref appearance based on the calculated player cost per game."
+                                                : "Use this when you hire officials at a set price per ref per game. Total ref cost is calculated from refs per game, total games, and cost per ref."}
+                                        </p>
+                                    </div>
+                                </div>
+                                <div className="grid gap-4 md:grid-cols-3">
+                                    <div>
+                                        <label className="mb-2 block text-sm font-medium">Refs Per Game</label>
+                                        <input type="number" value={refsPerGame}
+                                            onChange={(e) => setRefsPerGame(formatInputNumber(Number(e.target.value)))}
+                                            className="w-full rounded-lg border px-4 py-3 outline-none focus:ring-2 focus:ring-black" />
+                                    </div>
+                                    {refModel === "external" && (
+                                        <div>
+                                            <label className="mb-2 block text-sm font-medium">Cost Per Ref Per Game</label>
+                                            <input type="number" value={refCostPerGame}
+                                                onChange={(e) => setRefCostPerGame(formatInputNumber(Number(e.target.value)))}
+                                                className="w-full rounded-lg border px-4 py-3 outline-none focus:ring-2 focus:ring-black" />
+                                        </div>
+                                    )}
+                                    <div>
+                                        <label className="mb-2 block text-sm font-medium">Reserve / Buffer Percent</label>
+                                        <input type="number" value={reservePercent}
+                                            onChange={(e) => setReservePercent(formatInputNumber(Number(e.target.value)))}
+                                            className="w-full rounded-lg border px-4 py-3 outline-none focus:ring-2 focus:ring-black" />
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* 4. Playoff Billing Model */}
+                        <div className="rounded-xl border bg-white p-6 shadow-sm">
+                            <div className="mb-5">
+                                <h2 className="text-base font-semibold text-gray-900">
+                                    4. Playoff Billing Model
+                                </h2>
+                                <p className="mt-1 text-sm text-gray-500">
+                                    Choose how playoff costs are estimated and charged to players.
+                                </p>
+                            </div>
+                            <div className="space-y-5">
+
+                                {/* Finance payment model */}
+                                <div>
+                                    <label className="mb-2 block text-sm font-medium">How do you want to charge players?</label>
+                                    <select value={financePaymentModel}
+                                        onChange={(e) => setFinancePaymentModel(e.target.value)}
+                                        className="w-full rounded-lg border px-4 py-3 outline-none focus:ring-2 focus:ring-black">
+                                        <option value="regular_plus_playoff_actual">
+                                            Combined — one fee covers regular season and playoffs
+                                        </option>
+                                        <option value="regular_season_only">
+                                            Split — regular season fee now, playoff fee billed separately
+                                        </option>
+                                    </select>
+                                    <div className="mt-3 rounded-lg border bg-gray-50 p-4 text-sm text-gray-600">
+                                        {financePaymentModel === "regular_plus_playoff_actual" ? (
+                                            <>
+                                                <p className="font-medium text-gray-800">Combined billing</p>
+                                                <p className="mt-1">
+                                                    Every player pays one upfront fee that covers both regular season
+                                                    and their share of projected playoff costs. Simpler for players,
+                                                    no extra billing step at playoff time.
+                                                </p>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <p className="font-medium text-gray-800">Split billing</p>
+                                                <p className="mt-1">
+                                                    Players pay the regular season fee now. When playoffs begin,
+                                                    the system will bill the playoff fee only to players on
+                                                    qualifying teams. Fairer for teams that miss playoffs.
+                                                </p>
+                                            </>
+                                        )}
+                                    </div>
+                                </div>
+
+                                {/* Playoff cost allocation */}
+                                <div>
+                                    <label className="mb-2 block text-sm font-medium">Who pays for playoff costs?</label>
+                                    <select value={playoffCostAllocation}
+                                        onChange={(e) => setPlayoffCostAllocation(e.target.value)}
+                                        className="w-full rounded-lg border px-4 py-3 outline-none focus:ring-2 focus:ring-black">
+                                        <option value="playoff_teams_only">
+                                            Playoff teams only — only qualifying teams share playoff costs
+                                        </option>
+                                        <option value="all_players">
+                                            All players — playoff costs spread across the whole league
+                                        </option>
+                                    </select>
+                                    <p className="mt-2 text-xs text-gray-500">
+                                        {playoffCostAllocation === "playoff_teams_only"
+                                            ? `Only the ${playoffTeams} playoff teams bear the playoff ice and ref costs.`
+                                            : "Playoff costs are divided equally across all players in the league."}
+                                    </p>
+                                </div>
+
+                                {/* Playoff costing model */}
+                                <div>
+                                    <label className="mb-2 block text-sm font-medium">How should playoff costs be estimated?</label>
+                                    <select value={playoffCostingModel}
+                                        onChange={(e) => setPlayoffCostingModel(e.target.value)}
+                                        className="w-full rounded-lg border px-4 py-3 outline-none focus:ring-2 focus:ring-black">
+                                        <option value="worst_case">
+                                            Worst case — assume every series goes the maximum games
+                                        </option>
+                                        <option value="estimated">
+                                            Estimated — assume average series length (~60% of max)
+                                        </option>
+                                    </select>
+                                    <div className="mt-2 rounded-lg border bg-gray-50 p-3 text-xs text-gray-600">
+                                        <span className="font-medium">
+                                            {playoffCostingModel === "worst_case"
+                                                ? `Worst case: ${totals.worstCasePlayoffGamesPerTeam} games per team `
+                                                : `Estimated: ${totals.estimatedPlayoffGamesPerTeam} games per team `}
+                                        </span>
+                                        ({totals.playoffRounds} round{totals.playoffRounds !== 1 ? "s" : ""} × {" "}
+                                        {playoffCostingModel === "worst_case"
+                                            ? playoffGamesPerRoundForCosting
+                                            : Math.ceil(playoffGamesPerRoundForCosting * 0.6)}{" "}
+                                        games). We recommend worst case so the league is never short.
+                                    </div>
+                                </div>
+
+                                {/* Playoff payment model (only relevant in split billing) */}
+                                {isSplitModel && (
+                                    <div>
+                                        <label className="mb-2 block text-sm font-medium">
+                                            When do qualifying teams pay their playoff fee?
+                                        </label>
+                                        <select value={playoffPaymentModel}
+                                            onChange={(e) => setPlayoffPaymentModel(e.target.value)}
+                                            className="w-full rounded-lg border px-4 py-3 outline-none focus:ring-2 focus:ring-black">
+                                            <option value="pay_as_you_advance">
+                                                Pay as you advance — billed each round
+                                            </option>
+                                            <option value="upfront_at_qualification">
+                                                Upfront at qualification — full playoff fee when team qualifies
+                                            </option>
+                                        </select>
+                                        <p className="mt-2 text-xs text-gray-500">
+                                            {playoffPaymentModel === "pay_as_you_advance"
+                                                ? "Teams are billed per round as they advance. A team eliminated in round 1 only pays for round 1."
+                                                : "Teams pay the full estimated playoff fee as soon as they qualify, regardless of how far they advance."}
+                                        </p>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Save button */}
+                        <button
+                            type="button"
+                            onClick={handleSave}
+                            disabled={saving || playersLoading}
+                            className="w-full rounded-lg bg-black px-6 py-4 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-gray-800 disabled:opacity-50"
+                        >
+                            {saving ? "Saving..." : "Save Finance Settings"}
+                        </button>
+                    </div>
+
+                    {/* ---- Right column: summary panels ---- */}
+                    <div className="space-y-6 lg:col-span-2">
+
+                        {/* Pricing Summary */}
+                        <div className="rounded-xl border bg-white p-6 shadow-sm">
+                            <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-gray-500">
+                                Pricing Summary
+                            </h2>
+                            <div className="space-y-4">
+                                <div className="rounded-lg border bg-gray-50 p-4">
+                                    <p className="text-sm text-gray-500">
+                                        {isSplitModel ? "Regular Season Player Fee" : "Estimated Player Fee"}
+                                    </p>
+                                    <p className="mt-1 text-3xl font-bold">
+                                        ${roundUpDollar(isSplitModel
+                                            ? totals.regularSeasonPlayerFee
+                                            : totals.combinedPlayerFee
+                                        ).toLocaleString()}
+                                    </p>
+                                    <p className="mt-1 text-xs text-gray-500">
+                                        Exact: ${formatCurrency(isSplitModel
+                                            ? totals.regularSeasonPlayerFee
+                                            : totals.combinedPlayerFee)}
+                                    </p>
+                                </div>
+
+                                {isSplitModel && (
+                                    <div className="rounded-lg border bg-gray-50 p-4">
+                                        <p className="text-sm text-gray-500">Playoff Fee (qualifying players)</p>
+                                        <p className="mt-1 text-3xl font-bold">
+                                            ${roundUpDollar(totals.playoffPlayerFee).toLocaleString()}
+                                        </p>
+                                        <p className="mt-1 text-xs text-gray-500">
+                                            Exact: ${formatCurrency(totals.playoffPlayerFee)}
+                                        </p>
+                                    </div>
+                                )}
+
+                                <div className="rounded-lg border bg-gray-50 p-4">
+                                    <p className="text-sm text-gray-500">Player Cost Per Game (Reg Season)</p>
+                                    <p className="mt-1 text-xl font-semibold">
+                                        ${formatCurrency(totals.regularPlayerCostPerGame)}
+                                    </p>
+                                </div>
+
+                                {totals.playoffRounds > 0 && (
+                                    <div className="rounded-lg border bg-gray-50 p-4">
+                                        <p className="text-sm text-gray-500">Player Cost Per Game (Playoffs)</p>
+                                        <p className="mt-1 text-xl font-semibold">
+                                            ${formatCurrency(totals.playoffPlayerCostPerGame)}
+                                        </p>
+                                    </div>
+                                )}
+
+                                <div className="rounded-lg border bg-gray-50 p-4">
+                                    <p className="text-sm text-gray-500">Estimated Team Fee</p>
+                                    <p className="mt-1 text-xl font-semibold">
+                                        ${totals.billedTeamFee.toLocaleString()}
+                                    </p>
+                                    <p className="mt-1 text-xs text-gray-500">
+                                        Exact: ${formatCurrency(totals.suggestedTeamFee)}
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Player Base */}
+                        <div className="rounded-xl border bg-white p-6 shadow-sm">
+                            <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-gray-500">
+                                Player Base
+                            </h2>
+                            <div className="space-y-3 text-sm">
+                                <div className="flex justify-between">
+                                    <span>Expected Players</span>
+                                    <span className="font-medium">{expectedTotalPlayers}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span>Rostered Players</span>
+                                    <span className="font-medium">{totals.rosteredPlayers}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span>Exemption Equivalent</span>
+                                    <span className="font-medium">{totals.exemptionEquivalent.toFixed(2)}</span>
+                                </div>
+                                <div className="flex justify-between border-t pt-3">
+                                    <span className="font-semibold">Effective Paying Players</span>
+                                    <span className="font-bold">{totals.effectivePayingPlayers.toFixed(2)}</span>
+                                </div>
+                                {playoffTeams > 0 && (
+                                    <div className="flex justify-between">
+                                        <span>Playoff-Paying Players</span>
+                                        <span className="font-medium">{totals.playoffPayingPlayers.toFixed(2)}</span>
+                                    </div>
+                                )}
+                                <p className="pt-2 text-xs text-gray-500">
+                                    Before rosters exist, the estimate uses expected total players.
+                                    After players and exemptions are added, this updates based on the
+                                    real payable player count.
+                                </p>
+                            </div>
+                        </div>
+
+                        {/* Regular Season Breakdown */}
+                        <div className="rounded-xl border bg-white p-6 shadow-sm">
+                            <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-gray-500">
+                                Regular Season Breakdown
+                            </h2>
+                            <div className="space-y-3 text-sm">
+                                <div className="flex justify-between">
+                                    <span>League Games</span>
+                                    <span className="font-medium">{totals.regularSeasonLeagueGames}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span>Ice / Facility Cost</span>
+                                    <span className="font-medium">${formatCurrency(totals.regularIceTotal)}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span>Overhead (proportional)</span>
+                                    <span className="font-medium">${formatCurrency(totals.regularOverhead)}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span>Ref Cost</span>
+                                    <span className="font-medium">${formatCurrency(totals.regularRefTotalCost)}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span>Reserve Amount</span>
+                                    <span className="font-medium">${formatCurrency(totals.regularReserveAmount)}</span>
+                                </div>
+                                <div className="flex justify-between border-t pt-3 text-base">
+                                    <span className="font-semibold">Total Regular Season Cost</span>
+                                    <span className="font-bold">${formatCurrency(totals.totalRegularSeasonCost)}</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Playoff Breakdown */}
+                        {playoffTeams > 0 && (
+                            <div className="rounded-xl border bg-white p-6 shadow-sm">
+                                <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-gray-500">
+                                    Playoff Breakdown
+                                </h2>
+                                <div className="space-y-3 text-sm">
+                                    <div className="flex justify-between">
+                                        <span>Playoff Teams</span>
+                                        <span className="font-medium">{playoffTeams}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span>Playoff Rounds</span>
+                                        <span className="font-medium">{totals.playoffRounds}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span>Games Per Team ({playoffCostingModel === "worst_case" ? "worst case" : "estimated"})</span>
+                                        <span className="font-medium">{totals.playoffGamesForCosting}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span>Total Playoff League Games</span>
+                                        <span className="font-medium">{totals.playoffLeagueGames}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span>Ice / Facility Cost</span>
+                                        <span className="font-medium">${formatCurrency(totals.playoffIceTotal)}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span>Overhead (proportional)</span>
+                                        <span className="font-medium">${formatCurrency(totals.playoffOverhead)}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span>Ref Cost</span>
+                                        <span className="font-medium">${formatCurrency(totals.playoffRefTotalCost)}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span>Reserve Amount</span>
+                                        <span className="font-medium">${formatCurrency(totals.playoffReserveAmount)}</span>
+                                    </div>
+                                    <div className="flex justify-between border-t pt-3 text-base">
+                                        <span className="font-semibold">Total Playoff Cost</span>
+                                        <span className="font-bold">${formatCurrency(totals.totalPlayoffCost)}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+
+            </main>
+        </div>
     );
 }
